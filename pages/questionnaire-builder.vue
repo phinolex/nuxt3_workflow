@@ -638,7 +638,18 @@ onNodeDragStart((params) => {
 	const { node } = params
 	isDragging.value = true
 	const ghostId = `${node.id}-ghost`
-	addNodes({ ...node, id: ghostId, type: 'action-ghost' } satisfies GraphNode)
+	
+	// Créer un ghost node identique au node original
+	const ghostNode = {
+		...node,
+		id: ghostId,
+		data: {
+			...node.data,
+			isGhost: true // Marquer comme ghost pour le style
+		}
+	} satisfies GraphNode
+	
+	addNodes(ghostNode)
 	
 	const connectedEdges = getConnectedEdges([node], edges.value) as GraphEdge[]
 	for (const edge of connectedEdges) {
@@ -956,6 +967,11 @@ watch(workflowJSON, (newWorkflow) => {
 	margin: 0;
 	font-size: 20px;
 	color: #333;
+}
+
+/* Style pour les ghost nodes */
+:deep([data-id*="-ghost"]) {
+	opacity: 0.5;
 }
 
 .process-panel {
