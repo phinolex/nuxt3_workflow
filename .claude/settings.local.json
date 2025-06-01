@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install:*)",
+      "Bash(ls:*)",
+      "Bash(npm run dev:*)",
+      "Bash(mkdir:*)",
+      "Bash(npm view:*)",
+      "Bash(grep:*)",
+      "Bash(node test-deletion.js)",
+      "Bash(rm:*)",
+      "Bash(find:*)",
+      "Bash(sed:*)",
+      "Bash(rg:*)",
+      "Bash(npm uninstall:*)"
+    ],
+    "deny": []
+  }
+}
