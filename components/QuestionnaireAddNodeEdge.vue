@@ -89,6 +89,7 @@ function handleSelect(key) {
 
 function handleAddQuestion() {
   const nodes = getNodes.value
+  const edges = getEdges.value
   const sourceNode = nodes.find(n => n.id === props.source)
   const targetNode = nodes.find(n => n.id === props.target)
   
@@ -126,14 +127,54 @@ function handleAddQuestion() {
     type: 'add-node'
   }
   
-  const newEdge2 = {
-    id: `e-${newNodeId}-${props.target}`,
-    source: newNodeId,
-    target: props.target,
-    type: 'add-node'
-  }
+  // Vérifier si le node cible est un node "end" temporaire qui doit être supprimé
+  const shouldRemoveTargetEnd = targetNode.type === 'end' && 
+    edges.filter(e => e.source === props.target).length === 0 && // pas de connexions sortantes
+    edges.filter(e => e.target === props.target).length === 1 // seulement notre connexion entrante
   
-  addEdges([newEdge1, newEdge2])
+  if (shouldRemoveTargetEnd) {
+    // Supprimer le node end temporaire
+    setTimeout(() => {
+      removeNodes([props.target])
+    }, 50)
+    
+    // Créer un nouveau node end après le nouveau node
+    const endNodeId = `end-${Date.now()}`
+    const endNode = {
+      id: endNodeId,
+      type: 'end',
+      position: {
+        x: newNode.position.x,
+        y: newNode.position.y + 150
+      },
+      data: {
+        step: (newStep + 1).toString(),
+        name: 'Fin',
+        label: 'Questionnaire terminé'
+      }
+    }
+    
+    addNodes([endNode])
+    
+    const newEdge2 = {
+      id: `e-${newNodeId}-${endNodeId}`,
+      source: newNodeId,
+      target: endNodeId,
+      type: 'add-node'
+    }
+    
+    addEdges([newEdge1, newEdge2])
+  } else {
+    // Comportement normal : connecter au node cible existant
+    const newEdge2 = {
+      id: `e-${newNodeId}-${props.target}`,
+      source: newNodeId,
+      target: props.target,
+      type: 'add-node'
+    }
+    
+    addEdges([newEdge1, newEdge2])
+  }
   
   // Mettre à jour les steps des nœuds suivants
   nodes.forEach(node => {
@@ -145,6 +186,7 @@ function handleAddQuestion() {
 
 function handleAddAudio() {
   const nodes = getNodes.value
+  const edges = getEdges.value
   const sourceNode = nodes.find(n => n.id === props.source)
   const targetNode = nodes.find(n => n.id === props.target)
   
@@ -183,14 +225,54 @@ function handleAddAudio() {
     type: 'add-node'
   }
   
-  const newEdge2 = {
-    id: `e-${newNodeId}-${props.target}`,
-    source: newNodeId,
-    target: props.target,
-    type: 'add-node'
-  }
+  // Vérifier si le node cible est un node "end" temporaire qui doit être supprimé
+  const shouldRemoveTargetEnd = targetNode.type === 'end' && 
+    edges.filter(e => e.source === props.target).length === 0 && // pas de connexions sortantes
+    edges.filter(e => e.target === props.target).length === 1 // seulement notre connexion entrante
   
-  addEdges([newEdge1, newEdge2])
+  if (shouldRemoveTargetEnd) {
+    // Supprimer le node end temporaire
+    setTimeout(() => {
+      removeNodes([props.target])
+    }, 50)
+    
+    // Créer un nouveau node end après le nouveau node
+    const endNodeId = `end-${Date.now()}`
+    const endNode = {
+      id: endNodeId,
+      type: 'end',
+      position: {
+        x: newNode.position.x,
+        y: newNode.position.y + 150
+      },
+      data: {
+        step: (newStep + 1).toString(),
+        name: 'Fin',
+        label: 'Questionnaire terminé'
+      }
+    }
+    
+    addNodes([endNode])
+    
+    const newEdge2 = {
+      id: `e-${newNodeId}-${endNodeId}`,
+      source: newNodeId,
+      target: endNodeId,
+      type: 'add-node'
+    }
+    
+    addEdges([newEdge1, newEdge2])
+  } else {
+    // Comportement normal : connecter au node cible existant
+    const newEdge2 = {
+      id: `e-${newNodeId}-${props.target}`,
+      source: newNodeId,
+      target: props.target,
+      type: 'add-node'
+    }
+    
+    addEdges([newEdge1, newEdge2])
+  }
   
   // Mettre à jour les steps des nœuds suivants
   nodes.forEach(node => {
@@ -202,6 +284,7 @@ function handleAddAudio() {
 
 function handleAddCondition() {
   const nodes = getNodes.value
+  const edges = getEdges.value
   const sourceNode = nodes.find(n => n.id === props.source)
   const targetNode = nodes.find(n => n.id === props.target)
   
@@ -301,29 +384,71 @@ function handleAddCondition() {
     type: 'add-node'
   }))
   
-  // Créer l'edge du premier add-element vers le node cible existant (avec bouton +)
-  const firstAddElementToTarget = {
-    id: `e-${addElementNodes[0].id}-${props.target}`,
-    source: addElementNodes[0].id,
-    target: props.target,
-    type: 'add-node'
-  }
+  // Vérifier si le node cible est un node "end" temporaire qui doit être supprimé
+  const shouldRemoveTargetEnd = targetNode.type === 'end' && 
+    edges.filter(e => e.source === props.target).length === 0 && // pas de connexions sortantes
+    edges.filter(e => e.target === props.target).length === 1 // seulement notre connexion entrante
   
-  // Ajouter tous les nodes end
-  addNodes(endNodesForAddElements)
-  
-  // Ajouter tous les edges
-  addEdges([edgeToCondition, ...branchEdges, ...addNodeEdges, firstAddElementToTarget])
-  
-  // Déplacer le node cible existant vers le bas pour qu'il soit au niveau des add-element
-  if (targetNode) {
-    // Placer le node cible en dessous du premier add-element
-    updateNode(props.target, {
+  if (shouldRemoveTargetEnd) {
+    // Supprimer le node end temporaire après un court délai
+    setTimeout(() => {
+      removeNodes([props.target])
+    }, 100)
+    
+    // Créer l'edge du premier add-element vers un nouveau node end
+    const newEndNodeId = `end-${Date.now()}`
+    const newEndNode = {
+      id: newEndNodeId,
+      type: 'end',
       position: {
         x: addElementNodes[0].position.x,
         y: addElementNodes[0].position.y + 150
+      },
+      data: {
+        step: (parseInt(sourceNode.data.step) + 2).toString(),
+        name: 'Fin',
+        label: 'Questionnaire terminé'
       }
-    })
+    }
+    
+    // Ajouter le nouveau node end et tous les autres nodes end
+    addNodes([newEndNode, ...endNodesForAddElements])
+    
+    // Créer l'edge vers le nouveau node end
+    const firstAddElementToNewEnd = {
+      id: `e-${addElementNodes[0].id}-${newEndNodeId}`,
+      source: addElementNodes[0].id,
+      target: newEndNodeId,
+      type: 'add-node'
+    }
+    
+    // Ajouter tous les edges
+    addEdges([edgeToCondition, ...branchEdges, ...addNodeEdges, firstAddElementToNewEnd])
+  } else {
+    // Comportement normal : connecter au node cible existant
+    const firstAddElementToTarget = {
+      id: `e-${addElementNodes[0].id}-${props.target}`,
+      source: addElementNodes[0].id,
+      target: props.target,
+      type: 'add-node'
+    }
+    
+    // Ajouter tous les nodes end
+    addNodes(endNodesForAddElements)
+    
+    // Ajouter tous les edges
+    addEdges([edgeToCondition, ...branchEdges, ...addNodeEdges, firstAddElementToTarget])
+    
+    // Déplacer le node cible existant vers le bas pour qu'il soit au niveau des add-element
+    if (targetNode) {
+      // Placer le node cible en dessous du premier add-element
+      updateNode(props.target, {
+        position: {
+          x: addElementNodes[0].position.x,
+          y: addElementNodes[0].position.y + 150
+        }
+      })
+    }
   }
   
   // Mettre à jour les steps des nœuds suivants

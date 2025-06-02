@@ -37,6 +37,7 @@
 import { Handle, Position } from '@vue-flow/core'
 import { Icon } from '@iconify/vue'
 import { useVueFlow } from '@vue-flow/core'
+import { nextTick } from 'vue'
 
 const props = defineProps({
   data: {
@@ -54,14 +55,56 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['replace', 'node-replaced'])
-const { addNodes, removeNodes, addEdges, getEdges, getNode, removeEdges } = useVueFlow()
+const vueFlowInstance = useVueFlow()
+const { addNodes, removeNodes, addEdges, removeEdges, findNode } = vueFlowInstance
 
-const addNode = (type: string) => {
-  const currentNode = getNode.value(props.id)
-  if (!currentNode) return
+// Debug: voir ce qui est disponible
+console.log('🔍 VueFlow instance methods:', Object.keys(vueFlowInstance))
+
+const addNode = async (type: string) => {
+  console.log('🔄 AddElementNode: Début du remplacement', { currentId: props.id, newType: type })
+  
+  const currentNode = findNode(props.id)
+  if (!currentNode) {
+    console.error('❌ Node actuel non trouvé:', props.id)
+    return
+  }
 
   // Créer le nouveau node
   const newNodeId = `${type}-${Date.now()}`
+  
+  // Obtenir les edges connectés EN PREMIER pour pouvoir les sauvegarder
+  // Utiliser edges depuis l'instance VueFlow
+  const edges = vueFlowInstance.edges || vueFlowInstance.getEdges?.() || []
+  const allEdges = Array.isArray(edges) ? edges : (edges.value || [])
+  const incomingEdges = allEdges.filter(edge => edge.target === props.id)
+  const outgoingEdges = allEdges.filter(edge => edge.source === props.id)
+  
+  // SAUVEGARDER les edges entrant ET sortant AVANT toute autre opération
+  const savedIncomingEdge = incomingEdges.length > 0 ? { ...incomingEdges[0] } : null
+  const savedOutgoingEdge = outgoingEdges.length > 0 ? { ...outgoingEdges[0] } : null
+  console.log('💾 SAUVEGARDE EARLY - Edge entrant dans AddElementNode:', savedIncomingEdge)
+  console.log('💾 SAUVEGARDE EARLY - Edge sortant dans AddElementNode:', savedOutgoingEdge)
+
+  // Préparer les informations à stocker AVEC la position originale
+  const addElementInfo = {
+    nodeId: props.id,
+    conditionBranch: props.data.conditionBranch,
+    branchLabel: props.data.branchLabel,
+    originalPosition: {
+      x: currentNode.position.x,
+      y: currentNode.position.y
+    }
+  }
+  
+  console.log('📍 SAUVEGARDE - Position originale du node AddElement:', {
+    nodeId: props.id,
+    x: currentNode.position.x,
+    y: currentNode.position.y,
+    fullPosition: currentNode.position
+  })
+  console.log('💾 Storing Add Element info:', addElementInfo)
+  
   const newNode = {
     id: newNodeId,
     type: type,
@@ -69,24 +112,36 @@ const addNode = (type: string) => {
       x: currentNode.position.x,
       y: currentNode.position.y
     },
-    data: getDefaultDataForType(type)
+    data: {
+      ...getDefaultDataForType(type),
+      // Stocker les informations du node 'Ajouter un élément' d'origine
+      createdFromAddElement: {
+        ...addElementInfo,
+        savedIncomingEdge: savedIncomingEdge, // Ajouter l'edge entrant sauvé
+        savedOutgoingEdge: savedOutgoingEdge  // Ajouter l'edge sortant sauvé
+      }
+    }
   }
-
-  // Obtenir les edges connectés
-  const incomingEdges = getEdges.value.filter(edge => edge.target === props.id)
-  const outgoingEdges = getEdges.value.filter(edge => edge.source === props.id)
+  
+  console.log('🔗 Edges connectés:', { 
+    incoming: incomingEdges.length, 
+    outgoing: outgoingEdges.length 
+  })
 
   // Ajouter le nouveau node
+  console.log('➕ Ajout du nouveau node:', newNode)
   addNodes(newNode)
 
   // Supprimer les anciens edges
   removeEdges([...incomingEdges, ...outgoingEdges])
 
-  // Reconnecter les edges sans animation
+  // Reconnecter les edges sans animation avec de nouveaux IDs
   incomingEdges.forEach(edge => {
+    const newEdgeId = `e-${edge.source}-${edge.sourceHandle || 'default'}-${newNodeId}`
+    console.log('🔄 REMPLACEMENT EDGE - Ancien:', edge.id, '→ Nouveau:', newEdgeId)
     addEdges({
       ...edge,
-      id: edge.id,
+      id: newEdgeId, // CORRECTION: Nouvel ID d'edge
       target: newNodeId,
       type: edge.type || 'smoothstep',
       animated: false
@@ -103,42 +158,76 @@ const addNode = (type: string) => {
     })
   })
   
-  // Si le nouveau node n'est pas un node "end", créer un edge add-node en dessous
-  if (type !== 'end' && outgoingEdges.length === 0) {
-    // Créer un node fantôme temporaire pour l'edge add-node
-    const ghostTargetId = `${newNodeId}-ghost-target`
-    addNodes({
-      id: ghostTargetId,
-      type: 'action-ghost',
-      position: {
-        x: currentNode.position.x,
-        y: currentNode.position.y + 150
-      },
-      data: {
-        label: 'Cible temporaire',
-        isGhost: true
-      }
-    })
-    
-    // Créer l'edge add-node
-    addEdges({
-      id: `e-${newNodeId}-add`,
-      source: newNodeId,
-      target: ghostTargetId,
-      type: 'add-node'
+  // Gérer les edges sortants
+  if (type !== 'end') {
+    if (outgoingEdges.length > 0) {
+      // Reconnecter les edges sortants existants
+      outgoingEdges.forEach(edge => {
+        addEdges({
+          ...edge,
+          id: edge.id,
+          source: newNodeId,
+          type: 'add-node', // Toujours utiliser add-node pour avoir le bouton +
+          animated: false
+        })
+      })
+    } else {
+      // Créer un nouveau node 'end' comme cible par défaut
+      const endId = `${newNodeId}-end`
+      addNodes({
+        id: endId,
+        type: 'end',
+        position: {
+          x: currentNode.position.x,
+          y: currentNode.position.y + 150
+        },
+        data: {
+          label: 'Fin du questionnaire',
+          message: 'Merci d\'avoir complété ce questionnaire !'
+        }
+      })
+      
+      // Créer l'edge add-node vers le node end
+      addEdges({
+        id: `e-${newNodeId}-${endId}`,
+        source: newNodeId,
+        target: endId,
+        type: 'add-node'
+      })
+    }
+  } else {
+    // Pour un node 'end', reconnecter les edges sortants s'il y en a
+    outgoingEdges.forEach(edge => {
+      addEdges({
+        ...edge,
+        id: edge.id,
+        source: newNodeId,
+        animated: false
+      })
     })
   }
 
-  // Émettre l'événement de remplacement
-  emit('node-replaced', {
-    oldNodeId: props.id,
-    newNodeId: newNodeId,
-    newNodeType: type,
-    edgeInfo: incomingEdges[0] // Pour identifier la branche de condition
-  })
-
   // Supprimer l'ancien node
   removeNodes([props.id])
+  
+  // Attendre que tout soit bien mis à jour
+  await nextTick()
+  
+  console.log('✅ Node remplacé avec succès:', {
+    oldId: props.id,
+    newId: newNodeId,
+    type: type
+  })
+  
+  // Émettre l'événement de remplacement avec un délai pour s'assurer que tout est prêt
+  setTimeout(() => {
+    emit('node-replaced', {
+      oldNodeId: props.id,
+      newNodeId: newNodeId,
+      newNodeType: type,
+      edgeInfo: incomingEdges[0] // Pour identifier la branche de condition
+    })
+  }, 100)
 }
 
 const getDefaultDataForType = (type: string) => {

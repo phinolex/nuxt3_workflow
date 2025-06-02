@@ -12,7 +12,10 @@
       "Bash(find:*)",
       "Bash(sed:*)",
       "Bash(rg:*)",
-      "Bash(npm uninstall:*)"
+      "Bash(npm uninstall:*)",
+      "Bash(git checkout:*)",
+      "Bash(mv:*)",
+      "Bash(cp:*)"
     ],
     "deny": []
   }
