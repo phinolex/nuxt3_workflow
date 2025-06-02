@@ -951,6 +951,7 @@ function alignConvergingNodes() {
 	})
 }
 
+
 async function layoutAndFitGraph() {
 	await layoutGraph()
 	await nextTick()
