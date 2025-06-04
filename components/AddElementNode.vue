@@ -304,7 +304,26 @@ const addNode = async (type: string) => {
   // Forcer une mise à jour supplémentaire après un délai
   setTimeout(() => {
     console.log('🔄 Mise à jour finale des internals pour:', newNodeId)
-    updateNodeInternals([newNodeId])
+    
+    // Mettre à jour le nouveau node ET tous les nodes connectés
+    const nodesToUpdate = [newNodeId]
+    
+    // Ajouter les nodes sources des edges entrants
+    incomingEdges.forEach(edge => {
+      if (edge.source) nodesToUpdate.push(edge.source)
+    })
+    
+    // Ajouter les nodes cibles des edges sortants
+    const allEdges = vueFlowInstance.edges?.value || vueFlowInstance.getEdges?.()
+    const newOutgoingEdges = allEdges.filter(e => e.source === newNodeId)
+    newOutgoingEdges.forEach(edge => {
+      if (edge.target) nodesToUpdate.push(edge.target)
+    })
+    
+    // Mettre à jour tous les nodes concernés
+    const uniqueNodes = [...new Set(nodesToUpdate)]
+    console.log('🔄 Mise à jour des internals pour les nodes:', uniqueNodes)
+    updateNodeInternals(uniqueNodes)
     
     // Vérifier que le node est toujours là et bien configuré
     const finalCheck = findNode(newNodeId)

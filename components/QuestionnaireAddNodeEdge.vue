@@ -186,7 +186,9 @@ async function handleAddQuestion() {
   
   // IMPORTANT: Mettre à jour les internals du nouveau node pour activer le drag & drop
   await nextTick()
-  updateNodeInternals([newNodeId])
+  // Mettre à jour le nouveau node ET les nodes connectés pour corriger l'alignement
+  const nodesToUpdate = [newNodeId, props.source, props.target]
+  updateNodeInternals(nodesToUpdate)
 }
 
 async function handleAddAudio() {
@@ -289,7 +291,9 @@ async function handleAddAudio() {
   
   // IMPORTANT: Mettre à jour les internals du nouveau node pour activer le drag & drop
   await nextTick()
-  updateNodeInternals([newNodeId])
+  // Mettre à jour le nouveau node ET les nodes connectés pour corriger l'alignement
+  const nodesToUpdate = [newNodeId, props.source, props.target]
+  updateNodeInternals(nodesToUpdate)
 }
 
 async function handleAddCondition() {
