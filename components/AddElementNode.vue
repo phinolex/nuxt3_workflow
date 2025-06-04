@@ -1,5 +1,5 @@
 <template>
-  <div class="add-element-node" :class="{ 'is-dragging': isDragging }">
+  <div class="add-element-node" :class="{ 'is-dragging': isDragging || dragging, 'selected': selected }">
     <div class="node-header">
       <Icon icon="mdi:plus-circle" :width="20" />
       <span class="node-title">Ajouter un élément</span>
@@ -39,30 +39,72 @@ import { Icon } from '@iconify/vue'
 import { useVueFlow } from '@vue-flow/core'
 import { nextTick } from 'vue'
 
+// Définir toutes les props que VueFlow transmet automatiquement
 const props = defineProps({
+  id: {
+    type: String,
+    required: true
+  },
   data: {
     type: Object,
     required: true
+  },
+  type: {
+    type: String,
+    required: true
+  },
+  selected: {
+    type: Boolean,
+    default: false
+  },
+  sourcePosition: {
+    type: String,
+    default: Position.Bottom
+  },
+  targetPosition: {
+    type: String,
+    default: Position.Top
+  },
+  dragging: {
+    type: Boolean,
+    default: false
   },
   isDragging: {
     type: Boolean,
     default: false
   },
-  id: {
-    type: String,
-    required: true
+  position: {
+    type: Object,
+    default: () => ({ x: 0, y: 0 })
+  },
+  dimensions: {
+    type: Object,
+    default: () => ({ width: 240, height: 100 })
+  },
+  draggable: {
+    type: Boolean,
+    default: true
+  },
+  connectable: {
+    type: Boolean,
+    default: true
+  },
+  selectable: {
+    type: Boolean,
+    default: true
   }
 })
 
 const emit = defineEmits(['replace', 'node-replaced'])
 const vueFlowInstance = useVueFlow()
-const { addNodes, removeNodes, addEdges, removeEdges, findNode } = vueFlowInstance
+const { addNodes, removeNodes, addEdges, removeEdges, findNode, updateNodeInternals } = vueFlowInstance
 
 // Debug: voir ce qui est disponible
 console.log('🔍 VueFlow instance methods:', Object.keys(vueFlowInstance))
 
 const addNode = async (type: string) => {
   console.log('🔄 AddElementNode: Début du remplacement', { currentId: props.id, newType: type })
+  console.log('🔍 Props reçues par AddElementNode:', props)
   
   const currentNode = findNode(props.id)
   if (!currentNode) {
@@ -70,7 +112,7 @@ const addNode = async (type: string) => {
     return
   }
 
-  // Créer le nouveau node
+  // Créer l'ID du nouveau node
   const newNodeId = `${type}-${Date.now()}`
   
   // Obtenir les edges connectés EN PREMIER pour pouvoir les sauvegarder
@@ -120,7 +162,14 @@ const addNode = async (type: string) => {
         savedIncomingEdge: savedIncomingEdge, // Ajouter l'edge entrant sauvé
         savedOutgoingEdge: savedOutgoingEdge  // Ajouter l'edge sortant sauvé
       }
-    }
+    },
+    // IMPORTANT: Copier explicitement les propriétés du node actuel
+    draggable: currentNode.draggable !== false, // Par défaut true
+    selectable: currentNode.selectable !== false, // Par défaut true
+    connectable: currentNode.connectable !== false, // Par défaut true
+    focusable: currentNode.focusable !== false, // Par défaut true
+    // Copier les dimensions si elles existent
+    ...(currentNode.dimensions && { dimensions: currentNode.dimensions })
   }
   
   console.log('🔗 Edges connectés:', { 
@@ -128,36 +177,61 @@ const addNode = async (type: string) => {
     outgoing: outgoingEdges.length 
   })
 
-  // Ajouter le nouveau node
-  console.log('➕ Ajout du nouveau node:', newNode)
-  addNodes(newNode)
-
-  // Supprimer les anciens edges
+  // ORDRE CORRIGÉ : D'abord supprimer les anciens edges
+  console.log('🗑️ Suppression des edges existants')
   removeEdges([...incomingEdges, ...outgoingEdges])
+  
+  // Ensuite supprimer l'ancien node AVANT d'ajouter le nouveau
+  console.log('🗑️ Suppression du node AddElement:', props.id)
+  removeNodes([props.id])
+  
+  // Attendre que la suppression soit traitée
+  await nextTick()
+  
+  // MAINTENANT ajouter le nouveau node
+  console.log('➕ Ajout du nouveau node:', newNode)
+  console.log('📦 Node complet avec toutes les props:', {
+    ...newNode,
+    draggable: props.draggable,
+    selectable: props.selectable,
+    connectable: props.connectable
+  })
+  addNodes(newNode)
+  
+  // Attendre que le node soit ajouté
+  await nextTick()
+  
+  // IMPORTANT: Mettre à jour les internals du nouveau node IMMDIATEMENT après l'ajout
+  updateNodeInternals([newNodeId])
+  console.log('🔄 NodeInternals mis à jour pour:', newNodeId)
+  
+  // Vérifier que le node est bien dans la liste
+  const verifiedNode = findNode(newNodeId)
+  if (!verifiedNode) {
+    console.error('❌ ERREUR: Le nouveau node n\'est pas dans la liste!')
+  } else {
+    console.log('✅ Node vérifié:', verifiedNode)
+  }
+  
+  // Attendre que les internals soient mis à jour
+  await nextTick()
 
-  // Reconnecter les edges sans animation avec de nouveaux IDs
+  // MAINTENANT reconnecter les edges
+  console.log('🔗 Reconnexion des edges')
+  
+  // Reconnecter les edges entrants
   incomingEdges.forEach(edge => {
     const newEdgeId = `e-${edge.source}-${edge.sourceHandle || 'default'}-${newNodeId}`
     console.log('🔄 REMPLACEMENT EDGE - Ancien:', edge.id, '→ Nouveau:', newEdgeId)
     addEdges({
       ...edge,
-      id: newEdgeId, // CORRECTION: Nouvel ID d'edge
+      id: newEdgeId,
       target: newNodeId,
       type: edge.type || 'smoothstep',
       animated: false
     })
   })
 
-  outgoingEdges.forEach(edge => {
-    addEdges({
-      ...edge,
-      id: edge.id,
-      source: newNodeId,
-      type: edge.type || 'smoothstep',
-      animated: false
-    })
-  })
-  
   // Gérer les edges sortants
   if (type !== 'end') {
     if (outgoingEdges.length > 0) {
@@ -167,7 +241,7 @@ const addNode = async (type: string) => {
           ...edge,
           id: edge.id,
           source: newNodeId,
-          type: 'add-node', // Toujours utiliser add-node pour avoir le bouton +
+          type: 'add-node',
           animated: false
         })
       })
@@ -186,6 +260,10 @@ const addNode = async (type: string) => {
           message: 'Merci d\'avoir complété ce questionnaire !'
         }
       })
+      
+      // Attendre et mettre à jour les internals du node end aussi
+      await nextTick()
+      updateNodeInternals([endId])
       
       // Créer l'edge add-node vers le node end
       addEdges({
@@ -206,12 +284,6 @@ const addNode = async (type: string) => {
       })
     })
   }
-
-  // Supprimer l'ancien node
-  removeNodes([props.id])
-  
-  // Attendre que tout soit bien mis à jour
-  await nextTick()
   
   console.log('✅ Node remplacé avec succès:', {
     oldId: props.id,
@@ -228,6 +300,23 @@ const addNode = async (type: string) => {
       edgeInfo: incomingEdges[0] // Pour identifier la branche de condition
     })
   }, 100)
+  
+  // Forcer une mise à jour supplémentaire après un délai
+  setTimeout(() => {
+    console.log('🔄 Mise à jour finale des internals pour:', newNodeId)
+    updateNodeInternals([newNodeId])
+    
+    // Vérifier que le node est toujours là et bien configuré
+    const finalCheck = findNode(newNodeId)
+    if (finalCheck) {
+      console.log('✅ Vérification finale - Node présent:', {
+        id: finalCheck.id,
+        type: finalCheck.type,
+        draggable: finalCheck.draggable,
+        selectable: finalCheck.selectable
+      })
+    }
+  }, 500)
 }
 
 const getDefaultDataForType = (type: string) => {
@@ -237,18 +326,26 @@ const getDefaultDataForType = (type: string) => {
         label: 'Nouvelle question',
         question: '',
         questionType: 'radio',
-        options: ['Option 1', 'Option 2']
+        options: ['Option 1', 'Option 2'],
+        required: true,
+        // Ajouter un step pour maintenir l'ordre
+        step: `${Date.now()}`
       }
     case 'audio':
       return {
         label: 'Nouvel audio',
         audioUrl: '',
-        autoPlay: true
+        audioTitle: 'Audio configuré',
+        autoPlay: true,
+        duration: '0:00',
+        // Ajouter un step pour maintenir l'ordre
+        step: `${Date.now()}`
       }
     case 'end':
       return {
         label: 'Fin du questionnaire',
-        message: 'Merci d\'avoir complété ce questionnaire !'
+        message: 'Merci d\'avoir complété ce questionnaire !',
+        step: `${Date.now()}`
       }
     default:
       return {}
@@ -277,6 +374,12 @@ const getDefaultDataForType = (type: string) => {
 .add-element-node.is-dragging {
   opacity: 0.5;
   cursor: grabbing;
+}
+
+.add-element-node.selected {
+  border-color: #666;
+  border-style: solid;
+  box-shadow: 0 0 0 2px rgba(102, 102, 102, 0.3);
 }
 
 .node-header {

@@ -1,5 +1,5 @@
 <script setup>
-import { computed } from 'vue'
+import { computed, nextTick } from 'vue'
 import {
   BaseEdge,
   EdgeLabelRenderer,
@@ -14,7 +14,7 @@ const props = defineProps(['id', 'source', 'target', 'sourceX', 'sourceY', 'targ
 
 const emit = defineEmits(['edge-deleted'])
 
-const { addNodes, addEdges, removeEdges, getNodes, getEdges, updateNode } = useVueFlow()
+const { addNodes, addEdges, removeEdges, getNodes, getEdges, updateNode, updateNodeInternals } = useVueFlow()
 
 const path = computed(() => getSmoothStepPath(props))
 
@@ -87,7 +87,7 @@ function handleSelect(key) {
   }
 }
 
-function handleAddQuestion() {
+async function handleAddQuestion() {
   const nodes = getNodes.value
   const edges = getEdges.value
   const sourceNode = nodes.find(n => n.id === props.source)
@@ -114,6 +114,7 @@ function handleAddQuestion() {
       options: [],
       required: true
     }
+    // Les propriétés draggable, selectable, connectable sont gérées par VueFlow par défaut
   }
   
   addNodes([newNode])
@@ -182,9 +183,13 @@ function handleAddQuestion() {
       node.data.step = (parseInt(node.data.step) + 1).toString()
     }
   })
+  
+  // IMPORTANT: Mettre à jour les internals du nouveau node pour activer le drag & drop
+  await nextTick()
+  updateNodeInternals([newNodeId])
 }
 
-function handleAddAudio() {
+async function handleAddAudio() {
   const nodes = getNodes.value
   const edges = getEdges.value
   const sourceNode = nodes.find(n => n.id === props.source)
@@ -212,6 +217,7 @@ function handleAddAudio() {
       autoPlay: false,
       showControls: true
     }
+    // Les propriétés draggable, selectable, connectable sont gérées par VueFlow par défaut
   }
   
   addNodes([newNode])
@@ -280,9 +286,13 @@ function handleAddAudio() {
       node.data.step = (parseInt(node.data.step) + 1).toString()
     }
   })
+  
+  // IMPORTANT: Mettre à jour les internals du nouveau node pour activer le drag & drop
+  await nextTick()
+  updateNodeInternals([newNodeId])
 }
 
-function handleAddCondition() {
+async function handleAddCondition() {
   const nodes = getNodes.value
   const edges = getEdges.value
   const sourceNode = nodes.find(n => n.id === props.source)
@@ -311,6 +321,7 @@ function handleAddCondition() {
         { id: `${conditionNodeId}-branch2`, label: 'Option 2', condition: '' }
       ]
     }
+    // Les propriétés draggable, selectable, connectable sont gérées par VueFlow par défaut
   }
   
   // Créer les nodes add-element pour TOUTES les branches
@@ -335,6 +346,7 @@ function handleAddCondition() {
         conditionBranch: branch.id,
         branchLabel: branch.label
       }
+      // Les propriétés draggable, selectable, connectable sont gérées par VueFlow par défaut
     }
   })
   
@@ -457,6 +469,11 @@ function handleAddCondition() {
       node.data.step = (parseInt(node.data.step) + 1).toString()
     }
   })
+  
+  // IMPORTANT: Mettre à jour les internals du nouveau node de condition et des nodes add-element
+  await nextTick()
+  const allNewNodeIds = [conditionNodeId, ...addElementNodes.map(n => n.id)]
+  updateNodeInternals(allNewNodeIds)
 }
 
 function handleDeleteConnection() {

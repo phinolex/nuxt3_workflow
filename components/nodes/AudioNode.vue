@@ -1,5 +1,5 @@
 <template>
-  <div class="audio-node" :class="{ 'is-dragging': isDragging }" @click="onEdit">
+  <div class="audio-node" :class="{ 'is-dragging': isDragging || dragging, 'selected': selected }" @click="onEdit">
     <div class="node-header">
       <Icon icon="mdi:volume-high" :width="20" />
       <span class="node-title">{{ data.label || 'Audio' }}</span>
@@ -60,14 +60,59 @@ import { Handle, Position } from '@vue-flow/core'
 import { NIcon, NButton, NPopconfirm, NText } from 'naive-ui'
 import { Icon } from '@iconify/vue'
 
+// Définir toutes les props que VueFlow transmet automatiquement
 const props = defineProps({
+  id: {
+    type: String,
+    required: true
+  },
   data: {
     type: Object,
     required: true
   },
+  type: {
+    type: String,
+    required: true
+  },
+  selected: {
+    type: Boolean,
+    default: false
+  },
+  sourcePosition: {
+    type: String,
+    default: Position.Bottom
+  },
+  targetPosition: {
+    type: String,
+    default: Position.Top
+  },
+  dragging: {
+    type: Boolean,
+    default: false
+  },
   isDragging: {
     type: Boolean,
     default: false
+  },
+  position: {
+    type: Object,
+    default: () => ({ x: 0, y: 0 })
+  },
+  dimensions: {
+    type: Object,
+    default: () => ({ width: 200, height: 100 })
+  },
+  draggable: {
+    type: Boolean,
+    default: true
+  },
+  connectable: {
+    type: Boolean,
+    default: true
+  },
+  selectable: {
+    type: Boolean,
+    default: true
   }
 })
 
@@ -103,6 +148,11 @@ const onEdit = () => {
 .audio-node.is-dragging {
   opacity: 0.5;
   cursor: grabbing;
+}
+
+.audio-node.selected {
+  border-color: #666;
+  box-shadow: 0 0 0 2px rgba(102, 102, 102, 0.3);
 }
 
 .node-header {
@@ -165,5 +215,13 @@ const onEdit = () => {
   width: 8px;
   height: 8px;
   border: 2px solid white;
+}
+
+:deep(.vue-flow__handle-top) {
+  top: -4px;
+}
+
+:deep(.vue-flow__handle-bottom) {
+  bottom: -4px;
 }
 </style>

@@ -962,22 +962,22 @@ async function layoutAndFitGraph() {
 
 // Drag & Drop handling (réutilisé du code original)
 onNodeDragStart((params) => {
-	const { node } = params
 	isDragging.value = true
+	const { node } = params
 	const ghostId = `${node.id}-ghost`
-	
-	// Créer un ghost node identique au node original
+
+	// Create a ghost node to show the original position
 	const ghostNode = {
 		...node,
 		id: ghostId,
 		data: {
 			...node.data,
-			isGhost: true // Marquer comme ghost pour le style
+			isGhost: true // Mark as ghost for styling
 		}
 	} satisfies GraphNode
-	
+
 	addNodes(ghostNode)
-	
+
 	const connectedEdges = getConnectedEdges([node], edges.value) as GraphEdge[]
 	for (const edge of connectedEdges) {
 		edge.source = edge.source === node.id ? ghostId : edge.source
@@ -987,38 +987,39 @@ onNodeDragStart((params) => {
 
 onNodeDrag((params) => {
 	const { node, intersections } = params
+
 	if (!intersections || intersections.length === 0) return
-	
+
 	const ghostId = `${node.id}-ghost`
 	const ghostNode = findNode(ghostId)
 	if (!ghostNode) return
-	
+
 	const intersectionNode = intersections[0]
 	if (intersectionNode === ghostNode) return
-	
+
 	const ghostPosition = {
 		x: intersectionNode.position.x + intersectionNode.dimensions.width / 2 - ghostNode.dimensions.width / 2,
 		y: intersectionNode.position.y,
 	}
-	
+
 	const intersectionPosition = {
 		x: ghostNode.position.x + ghostNode.dimensions.width / 2 - intersectionNode.dimensions.width / 2,
 		y: ghostNode.position.y,
 	}
-	
+
 	updateNode(ghostId, { position: ghostPosition })
 	updateNode(intersectionNode.id, { position: intersectionPosition })
-	
+
 	const connectedEdges = getConnectedEdges([intersectionNode, ghostNode], edges.value) as GraphEdge[]
 	for (const edge of connectedEdges) {
 		let newSource = edge.source
 		let newTarget = edge.target
-		
+
 		if (edge.source === ghostId) newSource = intersectionNode.id
 		if (edge.target === ghostId) newTarget = intersectionNode.id
 		if (edge.source === intersectionNode.id) newSource = ghostId
 		if (edge.target === intersectionNode.id) newTarget = ghostId
-		
+
 		edge.source = newSource
 		edge.target = newTarget
 	}
@@ -1028,18 +1029,18 @@ onNodeDragStop((params) => {
 	const { node } = params
 	const ghostId = `${node.id}-ghost`
 	const ghostNode = findNode(ghostId)
-	
+
 	if (!ghostNode) return
-	
+
 	const connectedEdges = getConnectedEdges([ghostNode], edges.value) as GraphEdge[]
 	for (const edge of connectedEdges) {
 		edge.source = edge.source === ghostId ? node.id : edge.source
 		edge.target = edge.target === ghostId ? node.id : edge.target
 	}
-	
+
 	removeNodes([ghostNode])
 	isDragging.value = false
-	
+
 	nextTick(() => {
 		setTimeout(() => {
 			layoutGraph()

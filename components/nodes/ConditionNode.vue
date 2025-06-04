@@ -1,5 +1,5 @@
 <template>
-  <div class="condition-node" :class="{ 'is-dragging': isDragging }" @click="onEdit" :key="branchesKey">
+  <div class="condition-node" :class="{ 'is-dragging': isDragging || dragging, 'selected': selected }" @click="onEdit" :key="branchesKey">
     <div class="node-header">
       <Icon icon="mdi:tune" :width="20" />
       <span class="node-title">{{ data.label || 'Condition' }}</span>
@@ -61,18 +61,59 @@ import { NIcon, NButton, NPopconfirm, NTag } from 'naive-ui'
 import { Icon } from '@iconify/vue'
 import { computed } from 'vue'
 
+// Définir toutes les props que VueFlow transmet automatiquement
 const props = defineProps({
+  id: {
+    type: String,
+    required: true
+  },
   data: {
     type: Object,
     required: true
+  },
+  type: {
+    type: String,
+    required: true
+  },
+  selected: {
+    type: Boolean,
+    default: false
+  },
+  sourcePosition: {
+    type: String,
+    default: Position.Bottom
+  },
+  targetPosition: {
+    type: String,
+    default: Position.Top
+  },
+  dragging: {
+    type: Boolean,
+    default: false
   },
   isDragging: {
     type: Boolean,
     default: false
   },
-  id: {
-    type: String,
-    required: true
+  position: {
+    type: Object,
+    default: () => ({ x: 0, y: 0 })
+  },
+  dimensions: {
+    type: Object,
+    default: () => ({ width: 200, height: 100 })
+  },
+  draggable: {
+    type: Boolean,
+    default: true
+  },
+  connectable: {
+    type: Boolean,
+    default: true
+  },
+  selectable: {
+    type: Boolean,
+    default: true
   }
 })
 
@@ -131,6 +172,11 @@ const getBranches = () => {
 .condition-node.is-dragging {
   opacity: 0.5;
   cursor: grabbing;
+}
+
+.condition-node.selected {
+  border-color: #f0a020;
+  box-shadow: 0 0 0 2px rgba(240, 160, 32, 0.3);
 }
 
 .node-header {
