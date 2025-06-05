@@ -18,6 +18,8 @@ import QuestionnaireAddNodeEdge from '../components/QuestionnaireAddNodeEdge.vue
 import SimpleConditionEdge from '../components/SimpleConditionEdge.vue'
 import ActionGhostNode from '../components/ActionGhostNode.vue'
 import AddElementNode from '../components/AddElementNode.vue'
+import StartupModal from '../components/StartupModal.vue'
+import WorkflowSelector from '../components/WorkflowSelector.vue'
 
 // Import des modals de configuration
 import QuestionConfigModal from '../components/QuestionConfigModal.vue'
@@ -29,6 +31,7 @@ import { useLayout } from '../composables/useLayout'
 // Lazy loading des données initiales
 const getInitialData = () => import('../data/questionnaire-initial-data')
 import { fixConditionEdges } from '../utils/fix-condition-edges.js'
+import { getTemplateById } from '../data/questionnaire-templates'
 
 const message = useMessage()
 const dialog = useDialog()
@@ -130,6 +133,10 @@ const showQuestionModal = ref(false)
 const showAudioModal = ref(false)
 const showConditionModal = ref(false)
 const currentEditNode = ref<Node | null>(null)
+const showStartupModal = ref(true)
+const showWorkflowSelector = ref(false)
+const projectName = ref('Mon questionnaire')
+const currentWorkflowId = ref<string | null>(null)
 
 // Gestion des timeouts pour cleanup
 const timeouts = new Set<NodeJS.Timeout>()
@@ -1020,11 +1027,129 @@ const loadInitialData = async () => {
 	layoutAndFitGraph()
 }
 
+// Gérer la sélection depuis le modal de démarrage
+const handleWorkflowSelection = async (workflow: any) => {
+	isLoading.value = true
+	showWorkflowSelector.value = false
+	showStartupModal.value = false // Fermer aussi le modal de démarrage
+	
+	try {
+		// Charger le workflow sélectionné
+		nodes.value = workflow.nodes || []
+		edges.value = workflow.edges || []
+		projectName.value = workflow.metadata?.name || workflow.name || 'Questionnaire'
+		
+		// Stocker l'ID du workflow actuel pour les sauvegardes futures
+		currentWorkflowId.value = workflow.id
+		
+		triggerRef(nodes)
+		triggerRef(edges)
+		
+		await nextTick()
+		layoutAndFitGraph()
+		
+		message.success('Questionnaire chargé avec succès')
+	} catch (error) {
+		console.error('Erreur lors du chargement du questionnaire:', error)
+		message.error('Erreur lors du chargement du questionnaire')
+	} finally {
+		isLoading.value = false
+	}
+}
+
+const handleStartupSelection = async (action: any) => {
+	isLoading.value = true
+	
+	try {
+		switch (action.type) {
+			case 'new':
+				// Créer un questionnaire vide avec un node "Ajouter un élément"
+				currentWorkflowId.value = null // Réinitialiser l'ID pour créer un nouveau workflow
+				projectName.value = 'Mon questionnaire' // Réinitialiser le nom
+				const addElementId = 'add-element-1'
+				nodes.value = [
+					{ 
+						id: 'start', 
+						type: 'trigger', 
+						position: { x: 0, y: 0 }, 
+						data: { 
+							step: '1', 
+							name: 'Démarrer', 
+							label: 'Début du questionnaire'
+						} 
+					},
+					{
+						id: addElementId,
+						type: 'add-element',
+						position: { x: 0, y: 150 },
+						data: {
+							label: 'Ajouter un élément',
+							isGhost: true
+						}
+					}
+				]
+				edges.value = [
+					{
+						id: `e-start-${addElementId}`,
+						source: 'start',
+						target: addElementId,
+						type: 'add-node'
+					}
+				]
+				triggerRef(nodes)
+				triggerRef(edges)
+				break
+				
+			case 'template':
+				// Charger un template
+				currentWorkflowId.value = null // Nouveau workflow basé sur un template
+				const template = getTemplateById(action.template.id)
+				if (template) {
+					nodes.value = template.nodes
+					edges.value = template.edges
+					projectName.value = template.name
+					triggerRef(nodes)
+					triggerRef(edges)
+				}
+				break
+				
+			case 'load':
+				// Charger depuis un fichier
+				if (action.template) {
+					nodes.value = action.template.nodes || []
+					edges.value = action.template.edges || []
+					projectName.value = action.template.metadata?.name || 'Questionnaire importé'
+					// Si le fichier contient un ID, le conserver
+					currentWorkflowId.value = action.template.metadata?.id || null
+					triggerRef(nodes)
+					triggerRef(edges)
+				}
+				break
+				
+			case 'list':
+				// Ouvrir le sélecteur de questionnaires
+				showWorkflowSelector.value = true
+				isLoading.value = false
+				return // Sortir directement, pas besoin de layoutAndFitGraph
+		}
+		
+		await nextTick()
+		layoutAndFitGraph()
+	} finally {
+		isLoading.value = false
+	}
+}
+
 const edges = shallowRef<Edge[]>([])  // Initialiser vide pour lazy loading
 const isDragging = ref(false)
 
 // Créer une version debouncée de layoutGraph pour éviter les appels multiples
 let layoutGraphDebounced: ReturnType<typeof debounce>
+
+// Fonction debounced pour l'ajustement des branches
+const adjustConditionBranchSpacingDebounced = debounce(() => {
+	adjustConditionBranchSpacing()
+}, 300)
 
 // État de chargement
 const isLoading = ref(true)
@@ -1753,10 +1878,206 @@ const handleConditionConfirm = async (data: any) => {
 		newBranches: data.branches?.length || 0
 	})
 	
-	// DEBUG: État complet AVANT modification
-	console.log('📊 ÉTAT AVANT MODIFICATION:')
-	console.log('  - Tous les nodes:', nodes.value.map(n => ({ id: n.id, type: n.type, position: n.position })))
-	console.log('  - Tous les edges:', edges.value.map(e => ({ id: e.id, source: e.source, target: e.target, sourceHandle: e.sourceHandle })))
+	// Vérifier si une structure existe déjà (des nodes sont connectés)
+	const outgoingEdges = edges.value.filter(edge => edge.source === nodeId)
+	const hasExistingStructure = outgoingEdges.length > 0 && outgoingEdges.some(edge => {
+		const targetNode = nodes.value.find(n => n.id === edge.target)
+		// Si au moins un node connecté n'est pas un ghost/add-element, c'est qu'il y a une structure
+		return targetNode && targetNode.type !== 'add-element'
+	})
+	
+	// Vérifier si c'est une première configuration
+	const isFirstConfiguration = !hasExistingStructure && (
+		!currentEditNode.value.data.branches || 
+		currentEditNode.value.data.branches.length === 0 ||
+		currentEditNode.value.data.branches.every(b => !b.label || b.label === '')
+	)
+	
+	console.log('🎯 Analyse:', {
+		hasExistingStructure,
+		outgoingEdgesCount: outgoingEdges.length,
+		connectedNodes: outgoingEdges.map(e => {
+			const node = nodes.value.find(n => n.id === e.target)
+			return { id: e.target, type: node?.type, label: node?.data?.label }
+		}),
+		configType: isFirstConfiguration ? 'PREMIÈRE CONFIGURATION' : 'MISE À JOUR AVEC PRÉSERVATION'
+	})
+	
+	// Si c'est une mise à jour et non une première configuration, préserver la structure
+	if (!isFirstConfiguration) {
+		// Stratégie de préservation : mettre à jour les données sans toucher à la structure
+		console.log('📌 MODE PRÉSERVATION : Mise à jour des données uniquement')
+		
+		// Créer une map des branches existantes par ID
+		const existingBranchesMap = new Map()
+		if (currentEditNode.value.data.branches) {
+			currentEditNode.value.data.branches.forEach(branch => {
+				existingBranchesMap.set(branch.id, branch)
+			})
+		}
+		
+		// Gérer les branches : mise à jour, ajout et suppression
+		const existingBranches = currentEditNode.value.data.branches || []
+		const updatedBranches = []
+		
+		// Créer une map pour retrouver les branches par leur label ou position
+		const branchMap = new Map()
+		existingBranches.forEach((branch, index) => {
+			branchMap.set(branch.label || `branch-${index}`, { branch, index })
+		})
+		
+		// Traiter les nouvelles branches
+		data.branches.forEach((newBranch, index) => {
+			// Essayer de trouver une branche existante par label ou position
+			const existingByLabel = branchMap.get(newBranch.label)
+			const existingByPosition = existingBranches[index]
+			
+			if (existingByLabel) {
+				// Branche trouvée par label : fusionner
+				updatedBranches.push({
+					...existingByLabel.branch,
+					...newBranch,
+					id: existingByLabel.branch.id // Garder l'ID existant
+				})
+			} else if (existingByPosition && index < existingBranches.length) {
+				// Branche trouvée par position : fusionner
+				updatedBranches.push({
+					...existingByPosition,
+					...newBranch,
+					id: existingByPosition.id // Garder l'ID existant
+				})
+			} else {
+				// Nouvelle branche : créer un nouvel ID unique
+				updatedBranches.push({
+					...newBranch,
+					id: newBranch.id || `${nodeId}-branch-${Date.now()}-${index}`
+				})
+			}
+		})
+		
+		// Identifier les branches supprimées
+		const removedBranches = existingBranches.filter(existing => 
+			!updatedBranches.some(updated => updated.id === existing.id)
+		)
+		
+		console.log('📊 Gestion des branches:', {
+			existing: existingBranches.length,
+			updated: updatedBranches.length,
+			removed: removedBranches.length,
+			removedIds: removedBranches.map(b => b.id)
+		})
+		
+		// Mettre à jour uniquement les données du node
+		updateNode(nodeId, { 
+			data: { 
+				...currentEditNode.value.data, 
+				...data,
+				branches: updatedBranches
+			} 
+		})
+		
+		// Gérer les edges : mettre à jour existants, supprimer obsolètes, créer nouveaux
+		const currentOutgoingEdges = edges.value.filter(edge => edge.source === nodeId)
+		
+		// 1. Supprimer les edges des branches supprimées
+		if (removedBranches.length > 0) {
+			const edgesToRemove = currentOutgoingEdges.filter(edge => 
+				removedBranches.some(branch => branch.id === edge.sourceHandle)
+			)
+			if (edgesToRemove.length > 0) {
+				console.log('🗑️ Suppression des edges des branches supprimées:', edgesToRemove.map(e => e.id))
+				removeEdges(edgesToRemove.map(e => e.id))
+			}
+		}
+		
+		// 2. Mettre à jour les edges existants
+		currentOutgoingEdges.forEach(edge => {
+			const branch = updatedBranches.find(b => b.id === edge.sourceHandle)
+			if (branch) {
+				updateEdge(edge.id, {
+					label: branch.label,
+					data: {
+						...edge.data,
+						conditionValue: branch.value || branch.label,
+						conditionType: data.conditionType,
+						expectedValues: branch.values || [branch.value]
+					}
+				})
+			}
+		})
+		
+		// 3. Créer des edges pour les nouvelles branches (avec des nodes add-element)
+		const newBranches = updatedBranches.filter(branch => 
+			!currentOutgoingEdges.some(edge => edge.sourceHandle === branch.id)
+		)
+		
+		if (newBranches.length > 0) {
+			console.log('➕ Création de nodes pour les nouvelles branches:', newBranches.map(b => b.label))
+			
+			const newNodes = []
+			const newEdges = []
+			
+			newBranches.forEach((branch, index) => {
+				const ghostId = `${branch.id}-ghost`
+				const yOffset = 150
+				const xOffset = (index - (newBranches.length - 1) / 2) * 200
+				
+				// Créer un node add-element pour la nouvelle branche
+				newNodes.push({
+					id: ghostId,
+					type: 'add-element',
+					position: {
+						x: conditionNode.position.x + xOffset,
+						y: conditionNode.position.y + yOffset
+					},
+					data: {
+						label: 'Ajouter un élément',
+						isGhost: true,
+						parentConditionId: nodeId,
+						branchId: branch.id,
+						branchLabel: branch.label
+					}
+				})
+				
+				// Créer l'edge vers le nouveau node
+				newEdges.push({
+					id: `e-${nodeId}-${branch.id}-${ghostId}`,
+					source: nodeId,
+					sourceHandle: branch.id,
+					target: ghostId,
+					type: 'simple-condition',
+					label: branch.label,
+					animated: true,
+					data: {
+						conditionValue: branch.value || branch.label,
+						conditionType: data.conditionType,
+						expectedValues: branch.values || [branch.value]
+					}
+				})
+			})
+			
+			// Ajouter les nouveaux nodes et edges
+			if (newNodes.length > 0) {
+				addNodes(newNodes)
+				await nextTick()
+				addEdges(newEdges)
+			}
+		}
+		
+		// Mettre à jour les handles internes sans supprimer les connexions
+		await nextTick()
+		updateNodeInternals([nodeId])
+		
+		currentEditNode.value = null
+		showConditionModal.value = false
+		message.success('Condition mise à jour')
+		
+		console.log('✅ Mise à jour terminée sans modification de structure')
+		return
+	}
+	
+	// Si c'est une première configuration, continuer avec la logique existante
+	console.log('🆕 PREMIÈRE CONFIGURATION : Création de la structure')
 	
 	// Étape 1: Sauvegarder l'état actuel des connexions
 	const existingConnections = new Map<string, { target: string, edge: Edge }>()
@@ -1908,7 +2229,11 @@ const handleConditionConfirm = async (data: any) => {
 				target: actualTargetId, // Utiliser l'ID réel, pas l'ancien
 				type: 'simple-condition',
 				label: branch.label,
-				animated: isTemporaryNode // Seulement animer les nodes temporaires
+				animated: isTemporaryNode, // Seulement animer les nodes temporaires
+				data: {
+					conditionValue: branch.label, // Valeur attendue pour cette branche
+					conditionType: data.conditionType || 'value' // Type de condition
+				}
 			})
 		} else {
 			// Créer un nouveau node add-element
@@ -1936,7 +2261,11 @@ const handleConditionConfirm = async (data: any) => {
 				target: ghostId,
 				type: 'simple-condition',
 				label: branch.label,
-				animated: true
+				animated: true,
+				data: {
+					conditionValue: branch.label, // Valeur attendue pour cette branche
+					conditionType: data.conditionType || 'value' // Type de condition
+				}
 			})
 			
 			// CORRECTION: Créer automatiquement un node "Fin" et l'edge vers ce node
@@ -2168,12 +2497,60 @@ onMounted(async () => {
 		}
 	}, 300)
 	
-	// Charger les données initiales de façon asynchrone
-	try {
-		await loadInitialData()
-	} finally {
-		isLoading.value = false
+	// Vérifier si on doit charger un workflow existant
+	const urlParams = new URLSearchParams(window.location.search)
+	const editId = urlParams.get('edit')
+	
+	if (editId) {
+		// Charger le workflow à éditer
+		const savedWorkflow = localStorage.getItem(editId)
+		if (savedWorkflow) {
+			try {
+				const workflow = JSON.parse(savedWorkflow)
+				nodes.value = workflow.nodes || []
+				edges.value = workflow.edges || []
+				projectName.value = workflow.metadata?.name || 'Questionnaire'
+				currentWorkflowId.value = editId // Stocker l'ID du workflow en cours d'édition
+				triggerRef(nodes)
+				triggerRef(edges)
+				
+				await nextTick()
+				layoutAndFitGraph()
+				
+				// Ne pas afficher le modal de démarrage
+				showStartupModal.value = false
+			} catch (error) {
+				console.error('Erreur lors du chargement du workflow:', error)
+			}
+		}
+	} else {
+		// Vérifier aussi workflowToEdit (depuis questionnaire-select)
+		const workflowToEdit = localStorage.getItem('workflowToEdit')
+		if (workflowToEdit) {
+			try {
+				const workflow = JSON.parse(workflowToEdit)
+				nodes.value = workflow.nodes || []
+				edges.value = workflow.edges || []
+				projectName.value = workflow.metadata?.name || 'Questionnaire'
+				currentWorkflowId.value = workflow.metadata?.id || workflow.id // Stocker l'ID du workflow
+				triggerRef(nodes)
+				triggerRef(edges)
+				
+				await nextTick()
+				layoutAndFitGraph()
+				
+				// Nettoyer après chargement
+				localStorage.removeItem('workflowToEdit')
+				
+				// Ne pas afficher le modal de démarrage
+				showStartupModal.value = false
+			} catch (error) {
+				console.error('Erreur lors du chargement du workflow:', error)
+			}
+		}
 	}
+	
+	isLoading.value = false
 })
 
 // Cleanup des timeouts
@@ -2219,6 +2596,8 @@ async function layoutGraph() {
 		
 		// Sauvegarder les positions des nodes restaurés ou verrouillés AVANT le layout
 		const restoredNodes = new Map()
+		const conditionBranchOrder = new Map() // Pour préserver l'ordre gauche/droite des branches
+		
 		nodes.value.forEach(node => {
 			if (node.data?._restoredFromOriginal && node.data?._originalPosition) {
 				restoredNodes.set(node.id, node.data._originalPosition)
@@ -2234,6 +2613,29 @@ async function layoutGraph() {
 				restoredNodes.set(node.id, { ...node.position })
 				console.log('🔒 PROTECTION - Node temporairement verrouillé:', node.id, node.position)
 			}
+		})
+		
+		// Sauvegarder l'ordre des branches de condition AVANT le layout
+		nodes.value.filter(n => n.type === 'condition').forEach(conditionNode => {
+			const branchNodes = edges.value
+				.filter(e => e.source === conditionNode.id)
+				.map(e => ({
+					edge: e,
+					targetNode: nodes.value.find(n => n.id === e.target),
+					targetX: nodes.value.find(n => n.id === e.target)?.position.x
+				}))
+				.filter(item => item.targetNode)
+				.sort((a, b) => (a.targetX || 0) - (b.targetX || 0)) // Trier par position X
+			
+			conditionBranchOrder.set(conditionNode.id, branchNodes.map(item => ({
+				edgeId: item.edge.id,
+				targetId: item.edge.target,
+				sourceHandle: item.edge.sourceHandle,
+				originalOrder: branchNodes.indexOf(item)
+			})))
+			
+			console.log(`📌 Ordre des branches sauvegardé pour ${conditionNode.id}:`, 
+				branchNodes.map(item => `${item.edge.sourceHandle} → ${item.edge.target}`))
 		})
 		
 		// Forcer le recalcul du layout avec des options améliorées
@@ -2252,6 +2654,54 @@ async function layoutGraph() {
 			}
 		})
 		
+		// Restaurer l'ordre gauche/droite des branches de condition
+		conditionBranchOrder.forEach((branchOrder, conditionId) => {
+			const conditionNode = layoutedNodes.find(n => n.id === conditionId)
+			if (!conditionNode) return
+			
+			console.log(`🔄 Restauration ordre branches pour ${conditionId}`)
+			
+			// Obtenir les positions actuelles des branches après layout
+			const currentBranches = branchOrder.map(branch => {
+				const targetNode = layoutedNodes.find(n => n.id === branch.targetId)
+				return {
+					...branch,
+					node: targetNode,
+					currentX: targetNode?.position.x || 0
+				}
+			}).filter(b => b.node)
+			
+			// Trier par position X actuelle
+			const sortedByCurrentX = [...currentBranches].sort((a, b) => a.currentX - b.currentX)
+			
+			// Vérifier si l'ordre a changé
+			const orderChanged = currentBranches.some((branch, index) => {
+				const currentIndex = sortedByCurrentX.findIndex(b => b.targetId === branch.targetId)
+				return currentIndex !== branch.originalOrder
+			})
+			
+			if (orderChanged) {
+				console.log('⚠️ Ordre des branches modifié, correction en cours...')
+				
+				// Calculer les nouvelles positions X en préservant l'ordre original
+				const xPositions = sortedByCurrentX.map(b => b.currentX).sort((a, b) => a - b)
+				
+				// Réassigner les positions X selon l'ordre original
+				currentBranches
+					.sort((a, b) => a.originalOrder - b.originalOrder)
+					.forEach((branch, index) => {
+						if (branch.node && xPositions[index] !== undefined) {
+							const oldX = branch.node.position.x
+							branch.node.position.x = xPositions[index]
+							console.log(`  📍 ${branch.targetId}: X ${oldX} → ${xPositions[index]}`)
+							
+							// Déplacer aussi tous les nodes enfants de cette branche
+							moveDownstreamNodes(branch.targetId, xPositions[index] - oldX, 0, layoutedNodes)
+						}
+					})
+			}
+		})
+		
 		// Utiliser triggerRef pour forcer la mise à jour avec shallowRef
 		nodes.value = layoutedNodes
 		triggerRef(nodes)
@@ -2263,10 +2713,210 @@ async function layoutGraph() {
 		// Après le layout, ajuster les positions pour un meilleur alignement
 		setTimeout(() => {
 			alignConvergingNodes()
+			adjustConditionBranchSpacing()
 		}, 50)
 	} catch (error) {
 		console.error('Error during layout:', error)
 	}
+}
+
+// Fonction pour calculer la largeur d'une branche (incluant toutes les sous-branches)
+function calculateBranchWidth(nodeId: string): number {
+	const visited = new Set<string>()
+	let minX = Infinity
+	let maxX = -Infinity
+	const nodeWidth = 240 // Largeur standard d'un node
+	
+	function exploreBranch(currentId: string) {
+		if (visited.has(currentId)) return
+		visited.add(currentId)
+		
+		const node = nodes.value.find(n => n.id === currentId)
+		if (node) {
+			// Prendre en compte la largeur du node
+			const nodeLeft = node.position.x
+			const nodeRight = node.position.x + nodeWidth
+			minX = Math.min(minX, nodeLeft)
+			maxX = Math.max(maxX, nodeRight)
+		}
+		
+		// Explorer tous les nodes enfants
+		const outgoingEdges = edges.value.filter(e => e.source === currentId)
+		outgoingEdges.forEach(edge => {
+			exploreBranch(edge.target)
+		})
+	}
+	
+	exploreBranch(nodeId)
+	
+	// Si aucun node trouvé, retourner une largeur par défaut
+	if (minX === Infinity || maxX === -Infinity) {
+		return nodeWidth
+	}
+	
+	return maxX - minX
+}
+
+// Fonction pour déplacer tous les nodes en aval d'un node donné
+function moveDownstreamNodes(nodeId: string, deltaX: number, deltaY: number, nodesList: Node[] = nodes.value) {
+	// Récupérer tous les nodes en aval
+	const downstreamNodeIds = new Set<string>()
+	const visited = new Set<string>()
+	
+	function collectDownstream(currentId: string) {
+		if (visited.has(currentId)) return
+		visited.add(currentId)
+		
+		// Trouver tous les edges sortants
+		const outgoingEdges = edges.value.filter(e => e.source === currentId)
+		outgoingEdges.forEach(edge => {
+			if (!downstreamNodeIds.has(edge.target)) {
+				downstreamNodeIds.add(edge.target)
+				collectDownstream(edge.target)
+			}
+		})
+	}
+	
+	collectDownstream(nodeId)
+	
+	// Déplacer tous les nodes en aval
+	downstreamNodeIds.forEach(id => {
+		const node = nodesList.find(n => n.id === id)
+		if (node) {
+			node.position.x += deltaX
+			node.position.y += deltaY
+		}
+	})
+}
+
+// Fonction pour ajuster l'espacement des branches de condition pour éviter les chevauchements
+function adjustConditionBranchSpacing() {
+	console.log('🔧 Ajustement de l\'espacement des branches de condition')
+	
+	// Traiter chaque node condition
+	nodes.value.filter(n => n.type === 'condition').forEach(conditionNode => {
+		const conditionId = conditionNode.id
+		const outgoingEdges = edges.value.filter(e => e.source === conditionId)
+		
+		if (outgoingEdges.length < 2) return // Pas besoin d'ajuster s'il y a moins de 2 branches
+		
+		console.log(`📐 Analyse condition ${conditionId} avec ${outgoingEdges.length} branches`)
+		
+		// Collecter les informations sur chaque branche EN RESPECTANT L'ORDRE DES BRANCHES
+		const branchesData = conditionNode.data.branches || []
+		const branches = []
+		
+		// Parcourir les branches dans l'ordre défini dans les données du node
+		branchesData.forEach((branchData, index) => {
+			const edge = outgoingEdges.find(e => e.sourceHandle === branchData.id)
+			if (!edge) return
+			
+			const targetNode = nodes.value.find(n => n.id === edge.target)
+			if (!targetNode) return
+			
+			// Calculer la largeur de cette branche (incluant tous les sous-nodes)
+			const width = calculateBranchWidth(edge.target)
+			
+			branches.push({
+				edge,
+				targetNode,
+				width,
+				currentX: targetNode.position.x,
+				centerX: targetNode.position.x + 120, // Centre du node (largeur standard / 2)
+				originalIndex: index, // Garder l'index original
+				branchId: branchData.id,
+				branchLabel: branchData.label
+			})
+		})
+		
+		if (branches.length < 2) return
+		
+		console.log('📊 Branches analysées (dans l\'ordre):', branches.map(b => ({
+			index: b.originalIndex,
+			label: b.branchLabel,
+			target: b.edge.target,
+			width: b.width,
+			currentX: b.currentX
+		})))
+		
+		// Calculer l'espacement nécessaire entre chaque branche
+		const minSpacing = 50 // Espacement minimum entre les branches
+		const conditionCenterX = conditionNode.position.x + 120
+		
+		// Calculer la largeur totale nécessaire
+		const totalWidth = branches.reduce((sum, branch) => sum + branch.width, 0) + 
+			(branches.length - 1) * minSpacing
+		
+		// Calculer les nouvelles positions EN RESPECTANT L'ORDRE
+		let currentX = conditionCenterX - totalWidth / 2
+		const newPositions = []
+		
+		// Les branches sont déjà dans le bon ordre grâce à branchesData.forEach
+		branches.forEach((branch, index) => {
+			// Position X pour cette branche (de gauche à droite dans l'ordre)
+			const branchCenterX = currentX + branch.width / 2
+			const targetX = branchCenterX - 120 // Décaler pour que le centre du node soit aligné
+			
+			newPositions.push({
+				branch,
+				newX: targetX,
+				deltaX: targetX - branch.currentX,
+				shouldBeAtIndex: index
+			})
+			
+			currentX += branch.width + minSpacing
+		})
+		
+		// Vérifier si l'ordre actuel correspond à l'ordre souhaité
+		let orderIsCorrect = true
+		for (let i = 0; i < branches.length - 1; i++) {
+			// Si une branche avec un index plus petit est à droite d'une branche avec un index plus grand
+			if (branches[i].currentX > branches[i + 1].currentX) {
+				orderIsCorrect = false
+				console.log(`⚠️ Ordre incorrect : branche ${i} (${branches[i].branchLabel}) est à droite de branche ${i + 1} (${branches[i + 1].branchLabel})`)
+				break
+			}
+		}
+		
+		// Vérifier s'il y a des chevauchements avec les positions actuelles
+		let needsAdjustment = false
+		for (let i = 0; i < branches.length - 1; i++) {
+			const rightEdgeCurrentBranch = branches[i].currentX + branches[i].width
+			const leftEdgeNextBranch = branches[i + 1].currentX
+			
+			if (rightEdgeCurrentBranch + minSpacing > leftEdgeNextBranch) {
+				needsAdjustment = true
+				console.log(`⚠️ Chevauchement détecté entre branches ${i} et ${i + 1}`)
+				break
+			}
+		}
+		
+		// Appliquer les nouvelles positions si l'ordre n'est pas correct OU s'il y a des chevauchements
+		if (!orderIsCorrect || needsAdjustment || totalWidth > (branches[branches.length - 1].currentX + branches[branches.length - 1].width - branches[0].currentX)) {
+			console.log('🔄 Application des nouvelles positions:', {
+				orderIsCorrect,
+				needsAdjustment,
+				reason: !orderIsCorrect ? 'Ordre incorrect' : 'Chevauchement détecté'
+			})
+			
+			newPositions.forEach(({branch, newX, deltaX}) => {
+				if (Math.abs(deltaX) > 5) { // Seulement si le déplacement est significatif
+					console.log(`  📍 Déplacement ${branch.edge.target}: ${branch.currentX} → ${newX} (Δ${deltaX})`)
+					
+					// Déplacer le node cible
+					branch.targetNode.position.x = newX
+					
+					// Déplacer tous les nodes en aval
+					moveDownstreamNodes(branch.edge.target, deltaX, 0)
+				}
+			})
+			
+			// Forcer la mise à jour
+			triggerRef(nodes)
+		} else {
+			console.log('✅ Branches correctement ordonnées et espacées')
+		}
+	})
 }
 
 // Fonction pour aligner les nodes qui convergent vers un même point
@@ -2406,27 +3056,77 @@ onNodeDragStop((params) => {
 })
 
 // Sauvegarder le workflow
-const saveWorkflow = () => {
-	const workflow = {
-		nodes: nodes.value,
-		edges: edges.value,
-		metadata: {
-			name: 'Questionnaire de libération émotionnelle',
-			version: '1.0',
-			createdAt: new Date().toISOString()
+const saveWorkflow = (saveToFile = true) => {
+	// Utiliser l'ID existant si on modifie un workflow, sinon en créer un nouveau
+	const workflowId = currentWorkflowId.value || `workflow_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+	
+	console.log('💾 Sauvegarde du workflow:', {
+		currentWorkflowId: currentWorkflowId.value,
+		workflowId,
+		isNewWorkflow: !currentWorkflowId.value
+	})
+	
+	// Récupérer les métadonnées existantes si on modifie un workflow
+	let existingMetadata = {}
+	if (currentWorkflowId.value) {
+		const existingWorkflow = localStorage.getItem(workflowId)
+		if (existingWorkflow) {
+			try {
+				existingMetadata = JSON.parse(existingWorkflow).metadata || {}
+			} catch (e) {
+				console.error('Erreur lors de la lecture des métadonnées existantes:', e)
+			}
 		}
 	}
 	
-	const json = JSON.stringify(workflow, null, 2)
-	const blob = new Blob([json], { type: 'application/json' })
-	const url = URL.createObjectURL(blob)
-	const a = document.createElement('a')
-	a.href = url
-	a.download = `questionnaire-${Date.now()}.json`
-	a.click()
-	URL.revokeObjectURL(url)
+	const workflow = {
+		nodes: nodes.value.map(node => ({
+			id: node.id,
+			type: node.type,
+			position: node.position,
+			data: node.data
+		})),
+		edges: edges.value.map(edge => ({
+			id: edge.id,
+			source: edge.source,
+			target: edge.target,
+			type: edge.type,
+			label: edge.label,
+			sourceHandle: edge.sourceHandle,
+			targetHandle: edge.targetHandle,
+			animated: edge.animated,
+			data: edge.data
+		})),
+		metadata: {
+			...existingMetadata,
+			name: projectName.value,
+			version: '1.0',
+			createdAt: existingMetadata.createdAt || new Date().toISOString(),
+			lastModified: new Date().toISOString(),
+			id: workflowId
+		}
+	}
 	
-	message.success('Questionnaire sauvegardé avec succès')
+	// Sauvegarder dans le localStorage avec l'ID (existant ou nouveau)
+	localStorage.setItem(workflowId, JSON.stringify(workflow))
+	
+	// Mettre à jour l'ID actuel
+	currentWorkflowId.value = workflowId
+	// Aussi sauvegarder comme questionnaire actuel
+	localStorage.setItem('currentQuestionnaire', JSON.stringify(workflow))
+	
+	if (saveToFile) {
+		const json = JSON.stringify(workflow, null, 2)
+		const blob = new Blob([json], { type: 'application/json' })
+		const url = URL.createObjectURL(blob)
+		const a = document.createElement('a')
+		a.href = url
+		a.download = `${projectName.value.toLowerCase().replace(/\s+/g, '-')}-${Date.now()}.json`
+		a.click()
+		URL.revokeObjectURL(url)
+	}
+	
+	message.success(saveToFile ? 'Questionnaire exporté avec succès' : 'Questionnaire sauvegardé')
 }
 
 // Charger un workflow
@@ -2442,8 +3142,23 @@ const loadWorkflow = () => {
 			const text = await file.text()
 			const workflow = JSON.parse(text)
 			
-			nodes.value = workflow.nodes
-			edges.value = workflow.edges
+			nodes.value = workflow.nodes || []
+			edges.value = workflow.edges || []
+			projectName.value = workflow.metadata?.name || 'Questionnaire importé'
+			
+			// Si le workflow a un ID, le conserver pour les sauvegardes futures
+			if (workflow.metadata?.id) {
+				currentWorkflowId.value = workflow.metadata.id
+			} else {
+				// Sinon, réinitialiser pour créer un nouveau workflow
+				currentWorkflowId.value = null
+			}
+			
+			// Sauvegarder aussi dans le localStorage pour le preview
+			localStorage.setItem('currentQuestionnaire', JSON.stringify(workflow))
+			
+			triggerRef(nodes)
+			triggerRef(edges)
 			
 			await nextTick()
 			layoutAndFitGraph()
@@ -2460,8 +3175,27 @@ const loadWorkflow = () => {
 const previewQuestionnaire = () => {
 	// Sauvegarder le workflow dans le localStorage pour la page de preview
 	const workflow = {
-		nodes: nodes.value,
-		edges: edges.value
+		nodes: nodes.value.map(node => ({
+			id: node.id,
+			type: node.type,
+			position: node.position,
+			data: node.data
+		})),
+		edges: edges.value.map(edge => ({
+			id: edge.id,
+			source: edge.source,
+			target: edge.target,
+			type: edge.type,
+			label: edge.label,
+			sourceHandle: edge.sourceHandle,
+			targetHandle: edge.targetHandle,
+			animated: edge.animated,
+			data: edge.data
+		})),
+		metadata: {
+			name: projectName.value,
+			version: '1.0'
+		}
 	}
 	localStorage.setItem('currentQuestionnaire', JSON.stringify(workflow))
 	
@@ -2493,31 +3227,125 @@ const workflowJSON = computed(() => {
 watch(workflowJSON, (newWorkflow) => {
 	console.log('Workflow mis à jour:', newWorkflow)
 }, { deep: true })
+
+// Éditer le nom du projet
+const editProjectName = () => {
+	dialog.create({
+		title: 'Modifier le nom du projet',
+		content: () => h('input', {
+			value: projectName.value,
+			onInput: (e: Event) => {
+				projectName.value = (e.target as HTMLInputElement).value
+			},
+			style: {
+				width: '100%',
+				padding: '8px',
+				border: '1px solid #e0e0e6',
+				borderRadius: '4px',
+				fontSize: '14px'
+			}
+		}),
+		positiveText: 'Confirmer',
+		negativeText: 'Annuler',
+		onPositiveClick: () => {
+			message.success('Nom du projet mis à jour')
+		}
+	})
+}
+
+// Gérer le drag and drop depuis la palette
+const handleDragStart = (nodeType: string, event: DragEvent) => {
+	if (event.dataTransfer) {
+		event.dataTransfer.setData('application/vueflow', nodeType)
+		event.dataTransfer.effectAllowed = 'move'
+	}
+}
+
 </script>
 
 <template>
 	<div style="height: 100vh; display: flex; flex-direction: column;">
+		<!-- Modal de démarrage -->
+		<StartupModal 
+			v-model="showStartupModal"
+			@select="handleStartupSelection"
+		/>
+		
+		<!-- Sélecteur de questionnaires -->
+		<WorkflowSelector 
+			v-model="showWorkflowSelector"
+			@select="handleWorkflowSelection"
+		/>
+		
 		<!-- Barre d'outils -->
 		<div class="toolbar">
-			<div class="toolbar-title">
-				<h2>Créateur de Questionnaire</h2>
+			<div class="toolbar-left">
+				<h2 class="project-name">{{ projectName }}</h2>
+				<button class="edit-name-btn" @click="editProjectName">
+					<Icon icon="mdi:pencil" />
+				</button>
 			</div>
-			<n-space>
-				<n-button type="primary" @click="saveWorkflow">
+			<n-space class="toolbar-actions">
+				<n-button 
+					@click="showStartupModal = true"
+					quaternary
+					circle
+				>
+					<template #icon>
+						<Icon icon="mdi:file-plus" />
+					</template>
+				</n-button>
+				
+				<div class="divider" />
+				
+				<n-button 
+					@click="() => saveWorkflow(false)"
+					type="primary"
+				>
 					<template #icon>
 						<Icon icon="mdi:content-save" />
 					</template>
 					Sauvegarder
 				</n-button>
-				<n-button @click="loadWorkflow">
+				
+				<n-button 
+					@click="() => saveWorkflow(true)"
+					quaternary
+				>
 					<template #icon>
 						<Icon icon="mdi:download" />
 					</template>
-					Charger
+					Exporter JSON
 				</n-button>
-				<n-button type="info" @click="previewQuestionnaire">
+				
+				<n-button 
+					@click="loadWorkflow"
+					quaternary
+				>
 					<template #icon>
-						<Icon icon="mdi:play" />
+						<Icon icon="mdi:folder-open" />
+					</template>
+					Ouvrir
+				</n-button>
+				
+				<n-button 
+					@click="showWorkflowSelector = true"
+					quaternary
+				>
+					<template #icon>
+						<Icon icon="mdi:folder-multiple" />
+					</template>
+					Mes questionnaires
+				</n-button>
+				
+				<div class="divider" />
+				
+				<n-button 
+					@click="previewQuestionnaire"
+					type="info"
+				>
+					<template #icon>
+						<Icon icon="mdi:play-circle" />
 					</template>
 					Prévisualiser
 				</n-button>
@@ -2552,17 +3380,25 @@ watch(workflowJSON, (newWorkflow) => {
 				<Panel class="process-panel" position="top-right">
 					<div class="node-palette">
 						<h3>Éléments</h3>
-						<div class="palette-item" draggable="true">
-							<n-icon size="20" color="#2080f0" />
-							<span>Question</span>
-						</div>
-						<div class="palette-item" draggable="true">
-							<n-icon size="20" color="#f0a020" />
-							<span>Condition</span>
-						</div>
-						<div class="palette-item" draggable="true">
-							<n-icon size="20" color="#18a058" />
-							<span>Audio</span>
+						<div class="palette-items">
+							<div class="palette-item" draggable="true" @dragstart="handleDragStart('question', $event)">
+								<div class="palette-icon question">
+									<Icon icon="mdi:help-circle" :width="20" />
+								</div>
+								<span>Question</span>
+							</div>
+							<div class="palette-item" draggable="true" @dragstart="handleDragStart('condition', $event)">
+								<div class="palette-icon condition">
+									<Icon icon="mdi:source-branch" :width="20" />
+								</div>
+								<span>Condition</span>
+							</div>
+							<div class="palette-item" draggable="true" @dragstart="handleDragStart('audio', $event)">
+								<div class="palette-icon audio">
+									<Icon icon="mdi:microphone" :width="20" />
+								</div>
+								<span>Audio</span>
+							</div>
 						</div>
 					</div>
 				</Panel>
@@ -2651,18 +3487,56 @@ watch(workflowJSON, (newWorkflow) => {
 <style scoped>
 .toolbar {
 	background: white;
-	border-bottom: 1px solid #e0e0e6;
-	padding: 16px 24px;
+	border-bottom: 1px solid #e5e7eb;
+	padding: 12px 24px;
 	display: flex;
 	justify-content: space-between;
 	align-items: center;
-	box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+	box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+	z-index: 10;
 }
 
-.toolbar-title h2 {
+.toolbar-left {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+
+.project-name {
 	margin: 0;
-	font-size: 20px;
-	color: #333;
+	font-size: 18px;
+	font-weight: 600;
+	color: #1f2937;
+}
+
+.edit-name-btn {
+	padding: 4px;
+	border: none;
+	background: none;
+	color: #6b7280;
+	cursor: pointer;
+	border-radius: 4px;
+	transition: all 0.2s;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+}
+
+.edit-name-btn:hover {
+	background: #f3f4f6;
+	color: #374151;
+}
+
+.toolbar-actions {
+	display: flex;
+	align-items: center;
+}
+
+.divider {
+	width: 1px;
+	height: 24px;
+	background: #e5e7eb;
+	margin: 0 12px;
 }
 
 /* Style pour les ghost nodes */
@@ -2671,48 +3545,116 @@ watch(workflowJSON, (newWorkflow) => {
 }
 
 .process-panel {
-	background-color: white;
-	border: 1px solid #e0e0e6;
+	background: white;
+	border: 1px solid #e5e7eb;
 	padding: 16px;
-	border-radius: 8px;
-	box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+	border-radius: 12px;
+	box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+	min-width: 200px;
 }
 
 .node-palette h3 {
-	margin: 0 0 12px 0;
-	font-size: 14px;
-	color: #666;
+	margin: 0 0 16px 0;
+	font-size: 13px;
+	font-weight: 600;
+	color: #6b7280;
+	text-transform: uppercase;
+	letter-spacing: 0.05em;
+}
+
+.palette-items {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
 }
 
 .palette-item {
 	display: flex;
 	align-items: center;
-	gap: 8px;
-	padding: 8px 12px;
-	margin-bottom: 8px;
-	background: #f8f9fa;
-	border: 1px solid #e0e0e6;
-	border-radius: 6px;
+	gap: 12px;
+	padding: 12px;
+	background: #f9fafb;
+	border: 2px solid transparent;
+	border-radius: 10px;
 	cursor: grab;
 	transition: all 0.2s ease;
+	user-select: none;
 }
 
 .palette-item:hover {
-	background: #e8f4fd;
-	border-color: #2080f0;
+	background: #f3f4f6;
+	border-color: #e5e7eb;
+	transform: translateY(-1px);
+	box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
 }
 
 .palette-item:active {
 	cursor: grabbing;
+	transform: translateY(0);
 }
+
+.palette-icon {
+	width: 36px;
+	height: 36px;
+	border-radius: 8px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	color: white;
+}
+
+.palette-icon.question {
+	background: linear-gradient(135deg, #667eea, #764ba2);
+}
+
+.palette-icon.condition {
+	background: linear-gradient(135deg, #f093fb, #f5576c);
+}
+
+.palette-icon.audio {
+	background: linear-gradient(135deg, #4facfe, #00f2fe);
+}
+
+.palette-item span {
+	font-size: 14px;
+	font-weight: 500;
+	color: #374151;
+}
+
+/* Styles déjà mis à jour dans le bloc précédent */
 
 :deep(.vue-flow__node) {
 	cursor: pointer;
+	filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.05));
 }
 
 :deep(.vue-flow__handle) {
 	width: 10px;
 	height: 10px;
+	border: 2px solid white;
+	box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+
+:deep(.vue-flow__background) {
+	background-color: #fafbfc;
+}
+
+:deep(.vue-flow__controls) {
+	box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+	border: 1px solid #e5e7eb;
+	border-radius: 8px;
+	overflow: hidden;
+}
+
+:deep(.vue-flow__controls-button) {
+	background-color: white;
+	border: none;
+	color: #6b7280;
+}
+
+:deep(.vue-flow__controls-button:hover) {
+	background-color: #f3f4f6;
+	color: #374151;
 }
 </style>
 

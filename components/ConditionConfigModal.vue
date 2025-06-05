@@ -857,23 +857,38 @@ const handleSubmit = () => {
     conditionType: formData.conditionType,
     description: formData.description,
     targetQuestion: previousNode.value?.id || formData.targetQuestion,
-    branches: formData.branches.map(branch => ({
-      id: branch.id || `${props.nodeId}-${branch.label.toLowerCase().replace(/\s+/g, '-')}`,
-      label: branch.label,
-      condition: convertToCondition(branch),
-      // Preserve all branch properties for persistence
-      value: branch.value,
-      values: branch.values || [],
-      contains: branch.contains,
-      operator: branch.operator,
-      count: branch.count,
-      numberValue: branch.numberValue,
-      lengthValue: branch.lengthValue,
-      isEmpty: branch.isEmpty,
-      multipleMode: branch.multipleMode,
-      countOperator: branch.countOperator,
-      countValue: branch.countValue
-    }))
+    branches: formData.branches.map(branch => {
+      // Générer un ID basé sur la valeur pour une meilleure correspondance
+      let branchId = branch.id
+      if (formData.conditionType === 'single' && branch.value) {
+        // Pour les conditions simples, utiliser la valeur comme base de l'ID
+        branchId = `${props.nodeId}-${branch.value.toLowerCase().replace(/[^a-z0-9]/g, '-')}`
+      } else if (branch.isDefault) {
+        branchId = `${props.nodeId}-default`
+      } else {
+        branchId = branch.id || `${props.nodeId}-${branch.label.toLowerCase().replace(/\s+/g, '-')}`
+      }
+      
+      return {
+        id: branchId,
+        label: branch.label,
+        condition: convertToCondition(branch),
+        // Preserve all branch properties for persistence
+        value: branch.value,
+        values: branch.values || [],
+        contains: branch.contains,
+        operator: branch.operator,
+        count: branch.count,
+        numberValue: branch.numberValue,
+        lengthValue: branch.lengthValue,
+        isEmpty: branch.isEmpty,
+        multipleMode: branch.multipleMode,
+        countOperator: branch.countOperator,
+        countValue: branch.countValue,
+        // Ajouter les valeurs attendues pour faciliter le matching
+        expectedValues: formData.conditionType === 'single' ? [branch.value] : (branch.values || [])
+      }
+    })
   }
 
   emit('confirm', data)
