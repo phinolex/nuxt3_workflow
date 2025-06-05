@@ -43,16 +43,12 @@ A powerful, intuitive visual workflow builder for creating interactive questionn
 ## 🖼️ Screenshots
 
 ### Main Workflow Builder
-![Workflow Builder Interface](https://via.placeholder.com/800x600?text=Add+your+workflow+builder+screenshot+here)
+![Workflow Builder Interface](https://i.imgur.com/D40dDeW.png)
 
 ### Questionnaire Builder
-![Questionnaire Builder](https://via.placeholder.com/800x600?text=Add+your+questionnaire+builder+screenshot+here)
+![Questionnaire Builder](https://i.imgur.com/PjJVP6p.png)
+![Condition Node Configuration](https://i.imgur.com/HdOTnTx.png)
 
-### Condition Configuration
-![Condition Node Configuration](https://via.placeholder.com/800x600?text=Add+your+condition+config+screenshot+here)
-
-### Mobile Responsive View
-![Mobile View](https://via.placeholder.com/400x800?text=Add+your+mobile+view+screenshot+here)
 
 ## 🚀 Getting Started
 
@@ -273,12 +269,10 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 📞 Support
 
-- 📧 Email: support@example.com
-- 💬 Discord: [Join our community](https://discord.gg/example)
-- 🐛 Issues: [GitHub Issues](https://github.com/yourusername/workflow-builder/issues)
+- 💬 Discord: @phinolex
 
 ---
 
 <div align="center">
-Made with ❤️ by [Your Name]
+Made with ❤️ by Phinolex
 </div>

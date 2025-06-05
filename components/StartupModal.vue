@@ -207,7 +207,7 @@ const goToQuestionnaireList = () => {
 .modal-container {
   background: white;
   border-radius: 16px;
-  max-width: 900px;
+  max-width: 70%;
   width: 100%;
   max-height: 90vh;
   overflow: hidden;

@@ -1804,6 +1804,7 @@ const handleNodeDelete = async (nodeId: string) => {
 	setTimeout(() => {
 		console.log('🔄 Déclenchement du layout après suppression')
 		layoutGraph()
+		alignAllChildrenToParents() // Aligner après suppression
 	}, 200)
 }
 
@@ -1841,6 +1842,10 @@ const handleAddElementReplaced = async (event: any) => {
 		
 		// Réaligner tout le workflow en aval du nouveau node
 		await realignDownstreamWorkflow(event.newNodeId)
+		
+		// S'assurer que les branches de condition restent centrées
+		adjustConditionBranchSpacing()
+		alignAllChildrenToParents() // Aligner TOUS les enfants
 		
 		// Forcer la mise à jour complète des connexions pour corriger l'alignement
 		await forceUpdateAllConnections()
@@ -2073,6 +2078,12 @@ const handleConditionConfirm = async (data: any) => {
 		message.success('Condition mise à jour')
 		
 		console.log('✅ Mise à jour terminée sans modification de structure')
+		
+		// S'assurer que les branches sont bien centrées après la mise à jour
+		await nextTick()
+		adjustConditionBranchSpacing()
+		alignAllChildrenToParents() // Aligner TOUS les enfants
+		
 		return
 	}
 	
@@ -2338,6 +2349,10 @@ const handleConditionConfirm = async (data: any) => {
 		// Réaligner tout le workflow en aval de la condition
 		await realignDownstreamWorkflow(nodeId)
 		
+		// S'assurer que les branches sont bien centrées
+		adjustConditionBranchSpacing()
+		alignAllChildrenToParents() // Aligner TOUS les enfants
+		
 		// Puis faire le layout général
 		layoutGraph()
 	}, 200)
@@ -2494,6 +2509,10 @@ onMounted(async () => {
 		// Ne pas faire de layout si on est en mode restauration
 		if (!isRestoring) {
 			layoutGraph()
+			// Aligner après le layout debounced
+			setTimeout(() => {
+				alignAllChildrenToParents()
+			}, 100)
 		}
 	}, 300)
 	
@@ -2517,6 +2536,12 @@ onMounted(async () => {
 				await nextTick()
 				layoutAndFitGraph()
 				
+				// Forcer l'alignement après le chargement
+				setTimeout(() => {
+					console.log('🔧 Alignement forcé après chargement du workflow')
+					alignAllChildrenToParents()
+				}, 500)
+				
 				// Ne pas afficher le modal de démarrage
 				showStartupModal.value = false
 			} catch (error) {
@@ -2538,6 +2563,12 @@ onMounted(async () => {
 				
 				await nextTick()
 				layoutAndFitGraph()
+				
+				// Forcer l'alignement après le chargement
+				setTimeout(() => {
+					console.log('🔧 Alignement forcé après chargement du workflow')
+					alignAllChildrenToParents()
+				}, 500)
 				
 				// Nettoyer après chargement
 				localStorage.removeItem('workflowToEdit')
@@ -2714,6 +2745,7 @@ async function layoutGraph() {
 		setTimeout(() => {
 			alignConvergingNodes()
 			adjustConditionBranchSpacing()
+			alignAllChildrenToParents() // Aligner TOUS les enfants par rapport à leurs parents
 		}, 50)
 	} catch (error) {
 		console.error('Error during layout:', error)
@@ -2791,6 +2823,12 @@ function moveDownstreamNodes(nodeId: string, deltaX: number, deltaY: number, nod
 
 // Fonction pour ajuster l'espacement des branches de condition pour éviter les chevauchements
 function adjustConditionBranchSpacing() {
+	// Ne pas ajuster si on est en train de faire un drag manuel
+	if (isManualDragging || isDragging.value) {
+		console.log('🚫 Ajustement des branches ignoré - drag manuel en cours')
+		return
+	}
+	
 	console.log('🔧 Ajustement de l\'espacement des branches de condition')
 	
 	// Traiter chaque node condition
@@ -2817,19 +2855,20 @@ function adjustConditionBranchSpacing() {
 			// Calculer la largeur de cette branche (incluant tous les sous-nodes)
 			const width = calculateBranchWidth(edge.target)
 			
+			const nodeWidth = targetNode.dimensions?.width || 240
 			branches.push({
 				edge,
 				targetNode,
 				width,
 				currentX: targetNode.position.x,
-				centerX: targetNode.position.x + 120, // Centre du node (largeur standard / 2)
+				centerX: targetNode.position.x + nodeWidth / 2,
 				originalIndex: index, // Garder l'index original
 				branchId: branchData.id,
 				branchLabel: branchData.label
 			})
 		})
 		
-		if (branches.length < 2) return
+		if (branches.length === 0) return
 		
 		console.log('📊 Branches analysées (dans l\'ordre):', branches.map(b => ({
 			index: b.originalIndex,
@@ -2841,7 +2880,8 @@ function adjustConditionBranchSpacing() {
 		
 		// Calculer l'espacement nécessaire entre chaque branche
 		const minSpacing = 50 // Espacement minimum entre les branches
-		const conditionCenterX = conditionNode.position.x + 120
+		const conditionWidth = conditionNode.dimensions?.width || 240
+		const conditionCenterX = conditionNode.position.x + conditionWidth / 2
 		
 		// Calculer la largeur totale nécessaire
 		const totalWidth = branches.reduce((sum, branch) => sum + branch.width, 0) + 
@@ -2855,7 +2895,8 @@ function adjustConditionBranchSpacing() {
 		branches.forEach((branch, index) => {
 			// Position X pour cette branche (de gauche à droite dans l'ordre)
 			const branchCenterX = currentX + branch.width / 2
-			const targetX = branchCenterX - 120 // Décaler pour que le centre du node soit aligné
+			const targetNodeWidth = branch.targetNode.dimensions?.width || 240
+			const targetX = branchCenterX - targetNodeWidth / 2 // Décaler pour que le centre du node soit aligné
 			
 			newPositions.push({
 				branch,
@@ -2891,12 +2932,24 @@ function adjustConditionBranchSpacing() {
 			}
 		}
 		
-		// Appliquer les nouvelles positions si l'ordre n'est pas correct OU s'il y a des chevauchements
-		if (!orderIsCorrect || needsAdjustment || totalWidth > (branches[branches.length - 1].currentX + branches[branches.length - 1].width - branches[0].currentX)) {
+		// Vérifier si l'ensemble est bien centré par rapport au parent
+		const currentGroupCenter = (branches[0].currentX + branches[branches.length - 1].currentX + branches[branches.length - 1].width) / 2
+		const expectedGroupCenter = conditionCenterX
+		const centeringError = Math.abs(currentGroupCenter - expectedGroupCenter)
+		const needsCentering = centeringError > 10 // Tolérance de 10px
+		
+		if (needsCentering) {
+			console.log(`⚠️ Groupe non centré : écart de ${centeringError}px`)
+		}
+		
+		// TOUJOURS appliquer les positions pour garantir le centrage et l'ordre
+		if (!orderIsCorrect || needsAdjustment || needsCentering || totalWidth > (branches[branches.length - 1].currentX + branches[branches.length - 1].width - branches[0].currentX)) {
 			console.log('🔄 Application des nouvelles positions:', {
 				orderIsCorrect,
 				needsAdjustment,
-				reason: !orderIsCorrect ? 'Ordre incorrect' : 'Chevauchement détecté'
+				needsCentering,
+				centeringError: needsCentering ? centeringError : 0,
+				reason: !orderIsCorrect ? 'Ordre incorrect' : needsCentering ? 'Non centré' : 'Chevauchement détecté'
 			})
 			
 			newPositions.forEach(({branch, newX, deltaX}) => {
@@ -2954,6 +3007,163 @@ function alignConvergingNodes() {
 	})
 }
 
+// Nouvelle fonction pour aligner TOUS les enfants par rapport à leurs parents
+function alignAllChildrenToParents() {
+	// Ne pas aligner si on est en train de faire un drag manuel
+	if (isManualDragging || isDragging.value) {
+		console.log('🚫 Alignement ignoré - drag manuel en cours')
+		return
+	}
+	
+	console.log('🎯 Alignement global des enfants par rapport aux parents')
+	
+	// D'abord, traiter tous les nodes de condition
+	adjustConditionBranchSpacing()
+	
+	// Créer une map des relations parent-enfants
+	const parentChildMap = new Map<string, string[]>()
+	const childParentMap = new Map<string, string>()
+	
+	// Parcourir tous les edges pour construire les relations
+	edges.value.forEach(edge => {
+		const parentId = edge.source
+		const childId = edge.target
+		
+		// Ajouter l'enfant à la liste du parent
+		if (!parentChildMap.has(parentId)) {
+			parentChildMap.set(parentId, [])
+		}
+		parentChildMap.get(parentId)!.push(childId)
+		
+		// Mapper l'enfant à son parent (un enfant peut avoir plusieurs parents dans le cas de convergence)
+		// Pour l'alignement, on prend le premier parent trouvé
+		if (!childParentMap.has(childId)) {
+			childParentMap.set(childId, parentId)
+		}
+	})
+	
+	// Fonction récursive pour aligner les enfants d'un node
+	function alignChildrenOfNode(parentId: string, visited = new Set<string>()) {
+		if (visited.has(parentId)) return
+		visited.add(parentId)
+		
+		const children = parentChildMap.get(parentId)
+		if (!children || children.length === 0) return
+		
+		const parentNode = nodes.value.find(n => n.id === parentId)
+		if (!parentNode) return
+		
+		// Si c'est un node condition, on l'a déjà traité avec adjustConditionBranchSpacing
+		if (parentNode.type === 'condition') {
+			// Mais on doit quand même traiter récursivement ses enfants
+			children.forEach(childId => {
+				alignChildrenOfNode(childId, visited)
+			})
+			return
+		}
+		
+		// Filtrer les enfants valides (inclure TOUS les types de nodes)
+		const validChildren = children
+			.map(childId => nodes.value.find(n => n.id === childId))
+			.filter(child => child) // Garder tous les nodes existants
+		
+		if (validChildren.length === 0) return
+		
+		// Obtenir la largeur réelle du parent (par défaut 240px)
+		const parentWidth = parentNode.dimensions?.width || 240
+		const parentCenterX = parentNode.position.x + parentWidth / 2
+		
+		// Pour un seul enfant, le centrer directement
+		if (validChildren.length === 1) {
+			const child = validChildren[0]
+			const childWidth = child.dimensions?.width || 240
+			const childCenterX = child.position.x + childWidth / 2
+			const deltaX = parentCenterX - childCenterX
+			
+			if (Math.abs(deltaX) > 5) { // Seulement si le décalage est significatif
+				console.log(`  📍 Centrage ${child.id} (${child.type}) sous ${parentId}: Δ${deltaX}`)
+				child.position.x += deltaX
+				moveDownstreamNodes(child.id, deltaX, 0)
+			}
+		} else {
+			// Pour plusieurs enfants, les centrer en groupe
+			// Calculer la largeur totale du groupe
+			const minX = Math.min(...validChildren.map(c => c.position.x))
+			const maxX = Math.max(...validChildren.map(c => c.position.x + (c.dimensions?.width || 240)))
+			const groupWidth = maxX - minX
+			const groupCenterX = (minX + maxX) / 2
+			
+			// Calculer le décalage nécessaire pour centrer le groupe
+			const deltaX = parentCenterX - groupCenterX
+			
+			if (Math.abs(deltaX) > 5) { // Seulement si le décalage est significatif
+				console.log(`  📍 Centrage groupe de ${validChildren.length} enfants sous ${parentId}: Δ${deltaX}`)
+				validChildren.forEach(child => {
+					child.position.x += deltaX
+					moveDownstreamNodes(child.id, deltaX, 0)
+				})
+			}
+		}
+		
+		// Aligner récursivement les enfants des enfants
+		validChildren.forEach(child => {
+			alignChildrenOfNode(child.id, visited)
+		})
+	}
+	
+	// Commencer par le node trigger (racine)
+	const triggerNode = nodes.value.find(n => n.type === 'trigger')
+	if (triggerNode) {
+		alignChildrenOfNode(triggerNode.id)
+	}
+	
+	// Traiter spécifiquement les nodes "end" qui peuvent converger de plusieurs branches
+	const endNodes = nodes.value.filter(n => n.type === 'end')
+	endNodes.forEach(endNode => {
+		// Trouver tous les parents du node end
+		const incomingEdges = edges.value.filter(e => e.target === endNode.id)
+		if (incomingEdges.length === 0) return
+		
+		// Si un seul parent, centrer par rapport à lui
+		if (incomingEdges.length === 1) {
+			const parentNode = nodes.value.find(n => n.id === incomingEdges[0].source)
+			if (parentNode) {
+				const parentWidth = parentNode.dimensions?.width || 240
+				const parentCenterX = parentNode.position.x + parentWidth / 2
+				const endWidth = endNode.dimensions?.width || 240
+				const endCenterX = endNode.position.x + endWidth / 2
+				const deltaX = parentCenterX - endCenterX
+				
+				if (Math.abs(deltaX) > 5) {
+					console.log(`  📍 Centrage node fin ${endNode.id} sous ${parentNode.id}: Δ${deltaX}`)
+					endNode.position.x += deltaX
+				}
+			}
+		} else {
+			// Si plusieurs parents, centrer par rapport au centre de tous les parents
+			const parentPositions = incomingEdges
+				.map(edge => nodes.value.find(n => n.id === edge.source))
+				.filter(n => n)
+				.map(n => n!.position.x + (n!.dimensions?.width || 240) / 2)
+			
+			if (parentPositions.length > 0) {
+				const avgParentX = parentPositions.reduce((sum, x) => sum + x, 0) / parentPositions.length
+				const endWidth = endNode.dimensions?.width || 240
+				const endCenterX = endNode.position.x + endWidth / 2
+				const deltaX = avgParentX - endCenterX
+				
+				if (Math.abs(deltaX) > 5) {
+					console.log(`  📍 Centrage node fin ${endNode.id} sous ${parentPositions.length} parents: Δ${deltaX}`)
+					endNode.position.x += deltaX
+				}
+			}
+		}
+	})
+	
+	// Forcer la mise à jour
+	triggerRef(nodes)
+}
+
 
 async function layoutAndFitGraph() {
 	await layoutGraph()
@@ -2963,11 +3173,18 @@ async function layoutAndFitGraph() {
 	})
 }
 
+// Variable pour stocker les positions originales pendant le drag
+const originalPositions = new Map<string, { x: number, y: number }>()
+
 // Drag & Drop handling (réutilisé du code original)
 onNodeDragStart((params) => {
 	isDragging.value = true
+	isManualDragging = true // Indiquer qu'un drag manuel est en cours
 	const { node } = params
 	const ghostId = `${node.id}-ghost`
+
+	// Stocker la position originale du node
+	originalPositions.set(node.id, { ...node.position })
 
 	// Create a ghost node to show the original position
 	const ghostNode = {
@@ -2990,7 +3207,10 @@ onNodeDragStart((params) => {
 
 onNodeDrag((params) => {
 	const { node, intersections } = params
-
+	
+	// Laisser le drag se faire normalement pour que Vue Flow fonctionne
+	// Le node original bougera pendant le drag mais reviendra à sa position après
+	
 	if (!intersections || intersections.length === 0) return
 
 	const ghostId = `${node.id}-ghost`
@@ -3033,26 +3253,39 @@ onNodeDragStop((params) => {
 	const ghostId = `${node.id}-ghost`
 	const ghostNode = findNode(ghostId)
 
-	if (!ghostNode) return
-
-	const connectedEdges = getConnectedEdges([ghostNode], edges.value) as GraphEdge[]
-	for (const edge of connectedEdges) {
-		edge.source = edge.source === ghostId ? node.id : edge.source
-		edge.target = edge.target === ghostId ? node.id : edge.target
+	// Supprimer d'abord le ghost node
+	if (ghostNode) {
+		const connectedEdges = getConnectedEdges([ghostNode], edges.value) as GraphEdge[]
+		for (const edge of connectedEdges) {
+			edge.source = edge.source === ghostId ? node.id : edge.source
+			edge.target = edge.target === ghostId ? node.id : edge.target
+		}
+		removeNodes([ghostNode])
 	}
 
-	removeNodes([ghostNode])
+	// Forcer immédiatement le node à revenir à sa position originale
+	const originalPos = originalPositions.get(node.id)
+	if (originalPos) {
+		// Utiliser requestAnimationFrame pour s'assurer que le retour est visible
+		requestAnimationFrame(() => {
+			updateNode(node.id, { position: originalPos })
+			// Forcer la mise à jour des connexions
+			setTimeout(async () => {
+				await forceUpdateAllConnections()
+			}, 50)
+		})
+		// Nettoyer la position stockée
+		originalPositions.delete(node.id)
+	}
+
 	isDragging.value = false
 
-	nextTick(() => {
-		setTimeout(async () => {
-			// Réaligner le workflow en aval du node qui a été déplacé
-			await realignDownstreamWorkflow(node.id)
-			
-			// Puis faire le layout général
-			layoutGraph()
-		}, 50)
-	})
+	// Réinitialiser le flag après un délai pour permettre la sauvegarde
+	setTimeout(() => {
+		isManualDragging = false
+	}, 1000)
+
+	// Les nodes restent fixes - pas de repositionnement
 })
 
 // Sauvegarder le workflow
@@ -3223,9 +3456,18 @@ const workflowJSON = computed(() => {
 	}
 })
 
+// Flag pour indiquer qu'un drag manuel est en cours
+let isManualDragging = false
+
 // Observer les changements
 watch(workflowJSON, (newWorkflow) => {
 	console.log('Workflow mis à jour:', newWorkflow)
+	
+	// Ne pas sauvegarder automatiquement si on est en train de faire un drag manuel
+	if (!isManualDragging && currentWorkflowId.value) {
+		// Sauvegarder automatiquement sans télécharger le fichier
+		saveWorkflow(false)
+	}
 }, { deep: true })
 
 // Éditer le nom du projet
