@@ -105,6 +105,7 @@
 <script setup lang="ts">
 import { ref, defineProps, defineEmits } from 'vue'
 import { Icon } from '@iconify/vue'
+import { templates as questionnaireTemplates } from '../data/questionnaire-templates'
 
 const props = defineProps<{
   modelValue: boolean
@@ -117,40 +118,14 @@ const emit = defineEmits<{
 
 const showTemplates = ref(false)
 
-const templates = ref([
-  {
-    id: 'emotional-liberation',
-    name: 'Libération émotionnelle',
-    description: 'Un questionnaire guidé pour identifier et libérer les blocages émotionnels',
-    icon: 'mdi:heart-pulse',
-    questions: 3,
-    branches: 3
-  },
-  {
-    id: 'satisfaction-client',
-    name: 'Satisfaction client',
-    description: 'Évaluez la satisfaction de vos clients avec des questions ciblées',
-    icon: 'mdi:emoticon-happy',
-    questions: 5,
-    branches: 2
-  },
-  {
-    id: 'evaluation-employe',
-    name: 'Évaluation employé',
-    description: 'Un questionnaire complet pour les évaluations annuelles',
-    icon: 'mdi:account-check',
-    questions: 8,
-    branches: 4
-  },
-  {
-    id: 'sondage-simple',
-    name: 'Sondage simple',
-    description: 'Un modèle basique pour créer des sondages rapides',
-    icon: 'mdi:poll',
-    questions: 4,
-    branches: 1
-  }
-])
+const templates = ref(questionnaireTemplates.map(t => ({
+  id: t.id,
+  name: t.name,
+  description: t.description,
+  icon: t.icon,
+  questions: t.nodes.filter(n => n.type === 'question').length,
+  branches: t.nodes.filter(n => n.type === 'condition').length
+})))
 
 const handleNewProject = () => {
   emit('select', { type: 'new' })
@@ -181,7 +156,9 @@ const handleLoadFile = () => {
 }
 
 const handleSelectTemplate = (template: any) => {
-  emit('select', { type: 'template', template })
+  // Trouver le template complet depuis questionnaireTemplates
+  const fullTemplate = questionnaireTemplates.find(t => t.id === template.id)
+  emit('select', { type: 'template', template: fullTemplate })
   emit('update:modelValue', false)
 }
 
