@@ -2361,6 +2361,31 @@ const handleConditionConfirm = async (data: any) => {
 	console.log('🚨🚨🚨 FIN handleConditionConfirm 🚨🚨🚨\n')
 }
 
+// Fonction de validation pour empêcher les connexions invalides
+const isValidConnection = (connection: any) => {
+	console.log('🔍 Validation de connexion:', connection)
+	
+	// Trouver le node cible
+	const targetNode = nodes.value.find(n => n.id === connection.target)
+	if (!targetNode) return false
+	
+	// Si c'est un node de type "end", autoriser toujours la connexion
+	if (targetNode.type === 'end') {
+		console.log('✅ Connexion autorisée vers node End')
+		return true
+	}
+	
+	// Vérifier si le node cible a déjà une connexion entrante
+	const existingIncomingEdge = edges.value.find(e => e.target === connection.target)
+	if (existingIncomingEdge) {
+		console.log('❌ Connexion refusée - Le node a déjà une connexion entrante')
+		return false
+	}
+	
+	console.log('✅ Connexion autorisée')
+	return true
+}
+
 // Gérer les connexions manuelles
 const handleConnect = async (params: any) => {
 	console.log('\n=== DÉBUT CONNEXION ===')
@@ -2409,6 +2434,17 @@ const handleConnect = async (params: any) => {
 	}
 	
 	if (!sourceNode || !targetNode) return
+	
+	// NOUVELLE VALIDATION : Vérifier si le node cible a déjà une connexion entrante
+	// (sauf si c'est un node de type "end" qui peut avoir plusieurs connexions entrantes)
+	if (targetNode.type !== 'end') {
+		const existingIncomingEdge = edges.value.find(e => e.target === params.target)
+		if (existingIncomingEdge) {
+			console.log('❌ Le node cible a déjà une connexion entrante:', existingIncomingEdge)
+			message.warning('Ce node est déjà connecté. Un node ne peut avoir qu\'une seule connexion entrante (sauf les nodes de fin).')
+			return
+		}
+	}
 	
 	// Vérifier si on connecte VERS une branche de condition qui a déjà une connexion
 	// On doit regarder les edges qui PARTENT du node SOURCE (d'où on tire la connexion)
@@ -3614,6 +3650,7 @@ const handleDragStart = (nodeType: string, event: DragEvent) => {
 				:min-zoom="0.5"
 				:max-zoom="2"
 				:default-edge-options="{ type: 'add-node' }"
+				:connection-validator="isValidConnection"
 				pan-on-scroll
 				@connect="handleConnect"
 			>
