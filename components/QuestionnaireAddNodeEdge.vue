@@ -1,5 +1,5 @@
 <script setup>
-import { computed, nextTick } from 'vue'
+import { computed, nextTick, watch } from 'vue'
 import {
   BaseEdge,
   EdgeLabelRenderer,
@@ -10,9 +10,14 @@ import { NButton, NDropdown } from 'naive-ui'
 import { h } from 'vue'
 import { Icon } from '@iconify/vue'
 
-const props = defineProps(['id', 'source', 'target', 'sourceX', 'sourceY', 'targetX', 'targetY', 'sourcePosition', 'targetPosition', 'data', 'markerEnd', 'markerStart', 'label', 'sourceHandle'])
+const props = defineProps(['id', 'source', 'target', 'sourceX', 'sourceY', 'targetX', 'targetY', 'sourcePosition', 'targetPosition', 'data', 'markerEnd', 'markerStart', 'label', 'sourceHandle', 'isDropTarget'])
 
 const emit = defineEmits(['edge-deleted'])
+
+// Debug pour voir si la prop change
+watch(() => props.isDropTarget, (newVal) => {
+  console.log(`🎯 Edge ${props.id} isDropTarget:`, newVal)
+})
 
 const { addNodes, addEdges, removeEdges, getNodes, getEdges, updateNode, updateNodeInternals } = useVueFlow()
 
@@ -712,6 +717,15 @@ export default {
       }"
       class="nodrag nopan"
     >
+      <!-- Drop indicator moderne -->
+      <div v-if="props.isDropTarget" class="drop-indicator-modern">
+        <!-- Cercle principal avec animation douce -->
+        <div class="drop-circle-main"></div>
+        <!-- Pulsation douce -->
+        <div class="drop-pulse"></div>
+        <div class="drop-pulse drop-pulse-delayed"></div>
+      </div>
+      
       <n-dropdown 
         :options="dropdownOptions" 
         @select="handleSelect"
@@ -722,7 +736,7 @@ export default {
           size="tiny" 
           circle 
           type="primary"
-          class="add-button"
+          :class="['add-button', { 'drop-target': props.isDropTarget }]"
         >
           <template #icon>
             <Icon icon="mdi:plus" :width="12" />
@@ -741,6 +755,88 @@ export default {
 
 .add-button:hover {
   transform: scale(1.1);
+}
+
+.add-button.drop-target {
+  transform: scale(1.15);
+  background-color: #2080f0 !important;
+  border-color: #2080f0 !important;
+  box-shadow: 0 0 0 3px rgba(32, 128, 240, 0.2);
+  z-index: 20;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Drop indicator moderne */
+.drop-indicator-modern {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  z-index: 15;
+}
+
+/* Cercle principal avec animation douce */
+.drop-circle-main {
+  position: absolute;
+  width: 45px;
+  height: 45px;
+  border: 2px solid #2080f0;
+  border-radius: 50%;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  opacity: 0.6;
+  box-shadow: 0 0 10px rgba(32, 128, 240, 0.3);
+  animation: smooth-rotate 4s linear infinite, smooth-scale 2s ease-in-out infinite;
+}
+
+/* Animations douces pour le cercle principal */
+@keyframes smooth-rotate {
+  from {
+    transform: translate(-50%, -50%) rotate(0deg);
+  }
+  to {
+    transform: translate(-50%, -50%) rotate(360deg);
+  }
+}
+
+@keyframes smooth-scale {
+  0%, 100% {
+    transform: translate(-50%, -50%) scale(1);
+  }
+  50% {
+    transform: translate(-50%, -50%) scale(1.1);
+  }
+}
+
+/* Pulsations douces */
+.drop-pulse {
+  position: absolute;
+  width: 45px;
+  height: 45px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(32, 128, 240, 0.3) 0%, transparent 70%);
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%) scale(1);
+  animation: gentle-pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+.drop-pulse-delayed {
+  animation-delay: 1s;
+}
+
+/* Animation de pulsation douce */
+@keyframes gentle-pulse {
+  0% {
+    transform: translate(-50%, -50%) scale(1);
+    opacity: 0.5;
+  }
+  100% {
+    transform: translate(-50%, -50%) scale(2.5);
+    opacity: 0;
+  }
 }
 
 .n-dropdown {

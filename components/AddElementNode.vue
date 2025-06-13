@@ -1,5 +1,5 @@
 <template>
-  <div class="add-element-node" :class="{ 'is-dragging': isDragging || dragging, 'selected': selected }">
+  <div class="add-element-node" :class="{ 'is-dragging': isDragging || dragging, 'selected': selected, 'hovered': isHovered }">
     <div class="node-header">
       <Icon icon="mdi:plus-circle" :width="20" />
       <span class="node-title">Ajouter un élément</span>
@@ -37,7 +37,7 @@
 import { Handle, Position } from '@vue-flow/core'
 import { Icon } from '@iconify/vue'
 import { useVueFlow } from '@vue-flow/core'
-import { nextTick } from 'vue'
+import { nextTick, computed, inject } from 'vue'
 
 // Définir toutes les props que VueFlow transmet automatiquement
 const props = defineProps({
@@ -98,6 +98,15 @@ const props = defineProps({
 const emit = defineEmits(['replace', 'node-replaced'])
 const vueFlowInstance = useVueFlow()
 const { addNodes, removeNodes, addEdges, removeEdges, findNode, updateNodeInternals } = vueFlowInstance
+
+// Injecter l'état de survol depuis le parent (optionnel)
+const hoveredAddElementId = inject('hoveredAddElementId', null)
+
+// Computed pour savoir si ce node est survolé
+const isHovered = computed(() => {
+  if (!hoveredAddElementId || !hoveredAddElementId.value) return false
+  return hoveredAddElementId.value === props.id
+})
 
 // Debug: voir ce qui est disponible
 console.log('🔍 VueFlow instance methods:', Object.keys(vueFlowInstance))

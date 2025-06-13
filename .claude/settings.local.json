@@ -15,7 +15,8 @@
       "Bash(npm uninstall:*)",
       "Bash(git checkout:*)",
       "Bash(mv:*)",
-      "Bash(cp:*)"
+      "Bash(cp:*)",
+      "WebFetch(domain:vueflow.dev)"
     ],
     "deny": []
   }
