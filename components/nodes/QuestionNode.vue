@@ -1,5 +1,9 @@
 <template>
-  <div class="question-node" :class="{ 'is-dragging': isDragging || dragging, 'selected': selected }" @click="onEdit">
+  <div 
+    class="question-node" 
+    :class="{ 'is-dragging': isDragging || dragging, 'selected': selected }" 
+    @click="onEdit"
+  >
     <div class="node-header">
       <Icon icon="mdi:help-circle" :width="20" />
       <span class="node-title">{{ data.label || 'Question' }}</span>
@@ -31,6 +35,7 @@
             type="error" 
             circle
             @click.stop
+            class="nodrag"
           >
             <template #icon>
               <Icon icon="mdi:delete" :width="16" />
@@ -155,6 +160,7 @@ const getTypeTagType = (type: string) => {
   }
   return types[type] || 'default'
 }
+
 </script>
 
 <style scoped>
@@ -166,7 +172,11 @@ const getTypeTagType = (type: string) => {
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.08);
   transition: all 0.2s ease;
   position: relative;
-  cursor: pointer;
+  cursor: grab;
+}
+
+.question-node:active {
+  cursor: grabbing;
 }
 
 .question-node:hover {
@@ -195,6 +205,7 @@ const getTypeTagType = (type: string) => {
   border-radius: 6px 6px 0 0;
   color: #2080f0;
   font-weight: 500;
+  position: relative;
 }
 
 .node-title {

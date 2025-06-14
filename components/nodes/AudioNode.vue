@@ -1,5 +1,9 @@
 <template>
-  <div class="audio-node" :class="{ 'is-dragging': isDragging || dragging, 'selected': selected }" @click="onEdit">
+  <div 
+    class="audio-node" 
+    :class="{ 'is-dragging': isDragging || dragging, 'selected': selected }" 
+    @click="onEdit"
+  >
     <div class="node-header">
       <Icon icon="mdi:volume-high" :width="20" />
       <span class="node-title">{{ data.label || 'Audio' }}</span>
@@ -33,6 +37,7 @@
             quaternary
             circle
             @click.stop
+            class="nodrag"
           >
             <template #icon>
               <Icon icon="mdi:delete" :width="16" />
@@ -125,6 +130,7 @@ const onDelete = () => {
 const onEdit = () => {
   emit('edit')
 }
+
 </script>
 
 <style scoped>
@@ -136,7 +142,14 @@ const onEdit = () => {
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.08);
   transition: all 0.2s ease;
   position: relative;
-  cursor: pointer;
+}
+
+.audio-node {
+  cursor: grab;
+}
+
+.audio-node:active {
+  cursor: grabbing;
 }
 
 .audio-node:hover {
@@ -165,6 +178,7 @@ const onEdit = () => {
   border-radius: 6px 6px 0 0;
   color: #666;
   font-weight: 500;
+  position: relative;
 }
 
 .node-title {

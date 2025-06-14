@@ -1,5 +1,10 @@
 <template>
-  <div class="condition-node" :class="{ 'is-dragging': isDragging || dragging, 'selected': selected }" @click="onEdit" :key="branchesKey">
+  <div 
+    class="condition-node" 
+    :class="{ 'is-dragging': isDragging || dragging, 'selected': selected }" 
+    @click="onEdit" 
+    :key="branchesKey"
+  >
     <div class="node-header">
       <Icon icon="mdi:tune" :width="20" />
       <span class="node-title">{{ data.label || 'Condition' }}</span>
@@ -26,6 +31,7 @@
             type="error" 
             circle
             @click.stop
+            class="nodrag"
           >
             <template #icon>
               <Icon icon="mdi:delete" :width="16" />
@@ -160,7 +166,11 @@ const getBranches = () => {
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.08);
   transition: all 0.2s ease;
   position: relative;
-  cursor: pointer;
+  cursor: grab;
+}
+
+.condition-node:active {
+  cursor: grabbing;
 }
 
 .condition-node:hover {
@@ -189,6 +199,7 @@ const getBranches = () => {
   border-radius: 6px 6px 0 0;
   color: #f0a020;
   font-weight: 500;
+  position: relative;
 }
 
 .node-title {

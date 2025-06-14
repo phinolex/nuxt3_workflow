@@ -36,6 +36,17 @@ import { getTemplateById } from '../data/questionnaire-templates'
 const message = useMessage()
 const dialog = useDialog()
 
+// Configuration des types de nodes pour VueFlow
+const nodeTypes = {
+	trigger: TriggerNode,
+	question: QuestionNode,
+	audio: AudioNode,
+	condition: ConditionNode,
+	end: EndNode,
+	'action-ghost': ActionGhostNode,
+	'add-element': AddElementNode
+}
+
 const {
 	addEdges,
 	addNodes,
@@ -3210,7 +3221,6 @@ function alignAllChildrenToParents() {
 	triggerRef(nodes)
 }
 
-
 async function layoutAndFitGraph() {
 	await layoutGraph()
 	await nextTick()
@@ -3221,6 +3231,8 @@ async function layoutAndFitGraph() {
 
 // Variable pour stocker les positions originales pendant le drag
 const originalPositions = new Map<string, { x: number, y: number }>()
+// Variable pour stocker l'edge survolé pendant le drag d'un node
+const draggedNodeOverEdge = ref<string | null>(null)
 
 // Drag & Drop handling (réutilisé du code original)
 onNodeDragStart((params) => {
@@ -3254,9 +3266,124 @@ onNodeDragStart((params) => {
 onNodeDrag((params) => {
 	const { node, intersections } = params
 	
-	// Laisser le drag se faire normalement pour que Vue Flow fonctionne
-	// Le node original bougera pendant le drag mais reviendra à sa position après
+	// Vérifier si on survole un bouton +
+	const position = node.position
+	draggedNodeOverEdge.value = null
 	
+	// Fonction helper pour vérifier si un edge est dans la chaîne du node
+	const isEdgeInNodeChain = (edge: Edge, nodeId: string) => {
+		// Vérifier connexion directe
+		if (edge.source === nodeId || edge.target === nodeId) return true
+		
+		// Vérifier si l'edge connecte un parent du node à un enfant du node
+		const nodeIncoming = edges.value.filter(e => e.target === nodeId)
+		const nodeOutgoing = edges.value.filter(e => e.source === nodeId)
+		
+		// L'edge fait partie de la chaîne si :
+		// - Sa source est un parent du node ET sa target est le node
+		// - Sa source est le node ET sa target est un enfant du node
+		// - Sa source est un parent ET sa target est un enfant (edge qui serait créé par le pont)
+		
+		const isParentOfNode = nodeIncoming.some(e => e.source === edge.source)
+		const isChildOfNode = nodeOutgoing.some(e => e.target === edge.target)
+		
+		return (isParentOfNode && edge.target === nodeId) || 
+		       (edge.source === nodeId && isChildOfNode) ||
+		       (isParentOfNode && isChildOfNode)
+	}
+	
+	// Chercher l'edge le plus proche avec un bouton +, en excluant ceux de la chaîne du node
+	// MAIS inclure les edges vers des nodes add-element (on peut toujours déposer dessus)
+	const addNodeEdges = edges.value.filter(e => {
+		if (e.type !== 'add-node') return false
+		
+		// Si la target est un add-element, on l'inclut toujours
+		const targetNode = findNode(e.target)
+		if (targetNode && targetNode.type === 'add-element') {
+			return true
+		}
+		
+		// Sinon, on applique la logique normale
+		return !isEdgeInNodeChain(e, node.id)
+	})
+	let closestEdge = null
+	let minDistance = Infinity
+	
+	for (const edge of addNodeEdges) {
+		const sourceNode = findNode(edge.source)
+		const targetNode = findNode(edge.target)
+		
+		if (sourceNode && targetNode) {
+			// Calculer la position du bouton + (milieu de l'edge)
+			const sourceWidth = sourceNode.dimensions?.width || 150
+			const sourceHeight = sourceNode.dimensions?.height || 50
+			const targetWidth = targetNode.dimensions?.width || 150
+			
+			const sourceX = sourceNode.position.x + sourceWidth / 2
+			const sourceY = sourceNode.position.y + sourceHeight
+			const targetX = targetNode.position.x + targetWidth / 2
+			const targetY = targetNode.position.y
+			
+			const edgeCenterX = (sourceX + targetX) / 2
+			const edgeCenterY = (sourceY + targetY) / 2
+			
+			// Position du centre du node
+			const nodeWidth = node.dimensions?.width || 150
+			const nodeHeight = node.dimensions?.height || 50
+			const nodeCenterX = position.x + nodeWidth / 2
+			const nodeCenterY = position.y + nodeHeight / 2
+			
+			const distance = Math.sqrt(
+				Math.pow(nodeCenterX - edgeCenterX, 2) + 
+				Math.pow(nodeCenterY - edgeCenterY, 2)
+			)
+			
+			if (distance < minDistance && distance < 100) {
+				minDistance = distance
+				closestEdge = edge
+			}
+		}
+	}
+	
+	if (closestEdge) {
+		draggedNodeOverEdge.value = closestEdge.id
+		hoveredEdgeId.value = closestEdge.id // Pour l'indicateur visuel
+		hoveredAddElementId.value = null
+		console.log('🎯 Node survole le bouton +:', closestEdge.id)
+	} else {
+		hoveredEdgeId.value = null
+		
+		// Vérifier si on survole un node add-element
+		const nodeWidth = node.dimensions?.width || 150
+		const nodeHeight = node.dimensions?.height || 50
+		const nodeCenterX = position.x + nodeWidth / 2
+		const nodeCenterY = position.y + nodeHeight / 2
+		
+		const hoveredAddElement = nodes.value.find(n => {
+			if (n.type !== 'add-element' || n.id === node.id) return false
+			
+			const addElementWidth = n.dimensions?.width || 240
+			const addElementHeight = n.dimensions?.height || 100
+			const addElementCenterX = n.position.x + addElementWidth / 2
+			const addElementCenterY = n.position.y + addElementHeight / 2
+			
+			const distance = Math.sqrt(
+				Math.pow(nodeCenterX - addElementCenterX, 2) + 
+				Math.pow(nodeCenterY - addElementCenterY, 2)
+			)
+			
+			return distance < 150 // Zone de détection
+		})
+		
+		if (hoveredAddElement) {
+			hoveredAddElementId.value = hoveredAddElement.id
+			console.log('🎯 Node survole add-element:', hoveredAddElement.id)
+		} else {
+			hoveredAddElementId.value = null
+		}
+	}
+	
+	// Gérer les intersections comme avant
 	if (!intersections || intersections.length === 0) return
 
 	const ghostId = `${node.id}-ghost`
@@ -3294,7 +3421,7 @@ onNodeDrag((params) => {
 	}
 })
 
-onNodeDragStop((params) => {
+onNodeDragStop(async (params) => {
 	const { node } = params
 	const ghostId = `${node.id}-ghost`
 	const ghostNode = findNode(ghostId)
@@ -3309,7 +3436,65 @@ onNodeDragStop((params) => {
 		removeNodes([ghostNode])
 	}
 
-	// Forcer immédiatement le node à revenir à sa position originale
+	// Vérifier si on a déposé le node sur un bouton + ou un add-element
+	if (draggedNodeOverEdge.value) {
+		const targetEdge = edges.value.find(e => e.id === draggedNodeOverEdge.value)
+		if (targetEdge) {
+			console.log('🎯 Drop du node sur le bouton +:', targetEdge.id)
+			
+			// Sauvegarder la position originale avant de nettoyer
+			const originalPos = originalPositions.get(node.id)
+			
+			// Nettoyer les états immédiatement
+			draggedNodeOverEdge.value = null
+			hoveredEdgeId.value = null
+			hoveredAddElementId.value = null
+			isDragging.value = false
+			
+			// Gérer le déplacement du node vers l'edge
+			const moved = await handleMoveNodeToButton(node, targetEdge)
+			
+			// Si le déplacement n'a pas eu lieu (propre edge), forcer le retour
+			if (!moved && originalPos) {
+				// Forcer le retour à la position originale
+				updateNode(node.id, { position: originalPos })
+			}
+			
+			// Nettoyer la position stockée après usage
+			originalPositions.delete(node.id)
+			
+			// Réinitialiser le flag après un délai
+			setTimeout(() => {
+				isManualDragging = false
+			}, 1000)
+			
+			return
+		}
+	} else if (hoveredAddElementId.value) {
+		// Drop sur un node add-element
+		const targetAddElement = nodes.value.find(n => n.id === hoveredAddElementId.value)
+		if (targetAddElement && node.type !== 'condition') {
+			console.log('🎯 Drop du node sur add-element:', targetAddElement.id)
+			
+			// Nettoyer les états
+			hoveredAddElementId.value = null
+			originalPositions.delete(node.id)
+			isDragging.value = false
+			
+			// Le node a déjà pris la place du add-element via le système existant
+			// On doit juste supprimer le add-element maintenant
+			removeNodes([targetAddElement.id])
+			
+			// Réinitialiser le flag après un délai
+			setTimeout(() => {
+				isManualDragging = false
+			}, 1000)
+			
+			return
+		}
+	}
+
+	// Si pas de drop sur un bouton +, revenir à la position originale
 	const originalPos = originalPositions.get(node.id)
 	if (originalPos) {
 		// Utiliser requestAnimationFrame pour s'assurer que le retour est visible
@@ -3325,14 +3510,648 @@ onNodeDragStop((params) => {
 	}
 
 	isDragging.value = false
+	hoveredEdgeId.value = null
 
 	// Réinitialiser le flag après un délai pour permettre la sauvegarde
 	setTimeout(() => {
 		isManualDragging = false
 	}, 1000)
-
-	// Les nodes restent fixes - pas de repositionnement
 })
+
+// Gérer le déplacement d'un node vers un bouton +
+const handleMoveNodeToButton = async (node: Node, edge: Edge) => {
+	console.log('🔄 Déplacement du node vers bouton +', { node, edge })
+	
+	// Vérifier si c'est un déplacement sur le propre edge du node
+	// Un node est sur son propre edge si l'edge le connecte directement (source ou target)
+	const currentNodeIncomingEdges = edges.value.filter(e => e.target === node.id)
+	const currentNodeOutgoingEdges = edges.value.filter(e => e.source === node.id)
+	
+	// Vérifier si l'edge cible est un des edges connectés au node
+	const isOwnEdge = currentNodeIncomingEdges.some(e => e.id === edge.id) || 
+	                  currentNodeOutgoingEdges.some(e => e.id === edge.id)
+	
+	if (isOwnEdge) {
+		console.log('⚠️ Le node est déposé sur son propre edge, aucune modification')
+		return false
+	}
+	
+	// Obtenir les nodes source et target de l'edge
+	const sourceNode = findNode(edge.source)
+	const targetNode = findNode(edge.target)
+	if (!sourceNode || !targetNode) return
+	
+	// Sauvegarder les connexions actuelles du node AVANT de les supprimer
+	const nodeIncomingEdges = [...currentNodeIncomingEdges]
+	const nodeOutgoingEdges = [...currentNodeOutgoingEdges]
+	
+	console.log('📊 Connexions existantes:', {
+		incoming: nodeIncomingEdges,
+		outgoing: nodeOutgoingEdges
+	})
+	
+	// Créer un batch de suppressions et d'ajouts
+	const edgesToRemove = []
+	const edgesToAdd = []
+	
+	// Marquer pour suppression : l'edge cible et les connexions du node
+	edgesToRemove.push(edge.id)
+	nodeIncomingEdges.forEach(e => edgesToRemove.push(e.id))
+	nodeOutgoingEdges.forEach(e => edgesToRemove.push(e.id))
+	
+	// Créer les nouvelles connexions
+	// 1. Connecter la source de l'edge au node déplacé
+	const newEdge1 = {
+		id: `e-${edge.source}-${edge.sourceHandle ? edge.sourceHandle + '-' : ''}${node.id}`,
+		source: edge.source,
+		sourceHandle: edge.sourceHandle || undefined,
+		target: node.id,
+		type: edge.sourceHandle ? 'simple-condition' : 'add-node',
+		label: edge.label || undefined,
+		animated: edge.animated || false
+	}
+	edgesToAdd.push(newEdge1)
+	
+	// 2. Connecter le node déplacé à la target de l'edge
+	const newEdge2 = {
+		id: `e-${node.id}-${edge.target}`,
+		source: node.id,
+		target: edge.target,
+		type: 'add-node'
+	}
+	edgesToAdd.push(newEdge2)
+	
+	// 3. Reconnecter les anciens edges (créer un pont)
+	// RÈGLE STRICTE : On ne crée un pont que si :
+	// - Le node a un seul parent ET ce parent n'est pas une condition
+	// - OU le node a plusieurs parents (venant de branches de condition)
+	
+	if (nodeIncomingEdges.length === 1 && nodeOutgoingEdges.length > 0) {
+		const inEdge = nodeIncomingEdges[0]
+		const parentNode = findNode(inEdge.source)
+		
+		// Vérifier si le parent est une condition
+		if (parentNode && parentNode.type !== 'condition') {
+			// Parent n'est PAS une condition : on peut créer le pont
+			nodeOutgoingEdges.forEach(outEdge => {
+				const bridgeEdge = {
+					id: `e-${inEdge.source}-${outEdge.target}`,
+					source: inEdge.source,
+					target: outEdge.target,
+					type: 'add-node'
+				}
+				edgesToAdd.push(bridgeEdge)
+			})
+		} else if (parentNode && parentNode.type === 'condition') {
+			// Parent EST une condition : NE PAS créer de pont direct
+			console.log('⚠️ Parent est une condition, pas de pont direct créé')
+			// À la place, on doit créer un node "add-element" sur la branche orpheline
+			const branchId = inEdge.sourceHandle
+			if (branchId) {
+				const branch = parentNode.data.branches?.find(b => b.id === branchId)
+				if (branch) {
+					// Créer un node add-element pour cette branche
+					const addElementNode = {
+						id: `${parentNode.id}-${branchId}-ghost-${Date.now()}`,
+						type: 'add-element',
+						position: {
+							x: node.position.x,
+							y: node.position.y
+						},
+						data: {
+							label: `Suite: ${branch.label}`,
+							isGhost: true,
+							conditionBranch: branchId,
+							branchLabel: branch.label
+						}
+					}
+					
+					// Ajouter le node add-element
+					addNodes(addElementNode)
+					
+					// Connecter la condition au add-element
+					const condToAddElement = {
+						id: `e-${parentNode.id}-${branchId}-${addElementNode.id}`,
+						source: parentNode.id,
+						sourceHandle: branchId,
+						target: addElementNode.id,
+						type: 'simple-condition',
+						label: branch.label,
+						animated: true
+					}
+					edgesToAdd.push(condToAddElement)
+					
+					// Si le node déplacé avait des enfants, les connecter au add-element
+					if (nodeOutgoingEdges.length > 0) {
+						const firstChild = nodeOutgoingEdges[0]
+						const addElementToChild = {
+							id: `e-${addElementNode.id}-${firstChild.target}`,
+							source: addElementNode.id,
+							target: firstChild.target,
+							type: 'add-node'
+						}
+						edgesToAdd.push(addElementToChild)
+						
+						// Les autres enfants restent connectés entre eux
+						for (let i = 1; i < nodeOutgoingEdges.length; i++) {
+							const childEdge = {
+								id: `e-${nodeOutgoingEdges[i-1].target}-${nodeOutgoingEdges[i].target}`,
+								source: nodeOutgoingEdges[i-1].target,
+								target: nodeOutgoingEdges[i].target,
+								type: 'add-node'
+							}
+							edgesToAdd.push(childEdge)
+						}
+					} else {
+						// Pas d'enfants : créer un node end
+						const endNode = {
+							id: `${addElementNode.id}-end`,
+							type: 'end',
+							position: {
+								x: addElementNode.position.x,
+								y: addElementNode.position.y + 150
+							},
+							data: {
+								label: 'Fin du questionnaire',
+								message: 'Merci d\'avoir complété ce questionnaire !'
+							}
+						}
+						addNodes(endNode)
+						
+						const addElementToEnd = {
+							id: `e-${addElementNode.id}-${endNode.id}`,
+							source: addElementNode.id,
+							target: endNode.id,
+							type: 'add-node'
+						}
+						edgesToAdd.push(addElementToEnd)
+					}
+				}
+			}
+		}
+	} else if (nodeIncomingEdges.length > 1) {
+		// Plusieurs parents : c'est un node à la convergence de branches
+		// On ne crée pas de pont, chaque branche reste indépendante
+		console.log('⚠️ Node a plusieurs parents (convergence), pas de pont créé')
+	}
+	
+	// Appliquer toutes les modifications d'un coup
+	console.log('🗑️ Suppression des edges:', edgesToRemove)
+	removeEdges(edgesToRemove)
+	
+	// Attendre que les suppressions soient traitées
+	await nextTick()
+	
+	console.log('➕ Ajout des nouveaux edges:', edgesToAdd)
+	addEdges(edgesToAdd)
+	
+	// Repositionner le node entre les deux nodes
+	const sourceWidth = sourceNode.dimensions?.width || 150
+	const sourceHeight = sourceNode.dimensions?.height || 50
+	const nodeWidth = node.dimensions?.width || 150
+	
+	const newPosition = {
+		x: sourceNode.position.x + (sourceWidth - nodeWidth) / 2,
+		y: sourceNode.position.y + sourceHeight + 75
+	}
+	
+	updateNode(node.id, { position: newPosition })
+	
+	// Attendre que les modifications soient appliquées
+	await nextTick()
+	
+	// Mettre à jour les internals de tous les nodes concernés
+	const nodesToUpdate = [node.id, edge.source, edge.target]
+	if (nodeIncomingEdges.length > 0) {
+		nodeIncomingEdges.forEach(e => nodesToUpdate.push(e.source))
+	}
+	if (nodeOutgoingEdges.length > 0) {
+		nodeOutgoingEdges.forEach(e => nodesToUpdate.push(e.target))
+	}
+	
+	// Déduplication
+	const uniqueNodes = [...new Set(nodesToUpdate)]
+	console.log('🔄 Mise à jour des internals pour:', uniqueNodes)
+	updateNodeInternals(uniqueNodes)
+	
+	// Forcer le rafraîchissement complet
+	await nextTick()
+	triggerRef(nodes)
+	triggerRef(edges)
+	
+	// Lancer le layout après un court délai
+	setTimeout(async () => {
+		await forceUpdateAllConnections()
+		layoutGraph()
+	}, 200)
+	
+	return true // Indiquer que le déplacement a eu lieu
+}
+
+// NOUVELLES FONCTIONS POUR GÉRER LE DRAG & DROP DEPUIS LA PALETTE
+
+// Gérer le drop d'un élément de la palette sur un bouton + ou add-element
+const onDrop = async (event: DragEvent) => {
+	event.preventDefault()
+	
+	const nodeType = event.dataTransfer?.getData('application/vueflow')
+	if (!nodeType) return
+	
+	console.log('🎯 Drop détecté:', { nodeType, hoveredEdgeId: hoveredEdgeId.value, hoveredAddElementId: hoveredAddElementId.value })
+	
+	// Nettoyer les états de drag
+	isDraggingOver.value = false
+	
+	// Si on a droppé sur un bouton +
+	if (hoveredEdgeId.value) {
+		const targetEdge = edges.value.find(e => e.id === hoveredEdgeId.value)
+		if (targetEdge) {
+			console.log('📍 Drop sur bouton +:', targetEdge.id)
+			await handleDropOnButton(nodeType, targetEdge)
+		}
+	}
+	// Si on a droppé sur un node add-element
+	else if (hoveredAddElementId.value) {
+		const targetAddElement = nodes.value.find(n => n.id === hoveredAddElementId.value)
+		if (targetAddElement) {
+			console.log('📍 Drop sur add-element:', targetAddElement.id)
+			await handleDropOnAddElement(nodeType, targetAddElement)
+		}
+	}
+	
+	// Nettoyer les états
+	hoveredEdgeId.value = null
+	hoveredAddElementId.value = null
+}
+
+// Gérer le drop d'un type de node sur un bouton +
+const handleDropOnButton = async (nodeType: string, edge: Edge) => {
+	const sourceNode = findNode(edge.source)
+	const targetNode = findNode(edge.target)
+	if (!sourceNode || !targetNode) return
+	
+	const newNodeId = `${nodeType}-${Date.now()}`
+	const sourceStep = parseInt(sourceNode.data.step) || 0
+	const newStep = sourceStep + 1
+	
+	// Créer le nouveau node selon le type
+	const newNode = createNodeByType(nodeType, newNodeId, newStep, {
+		x: (sourceNode.position.x + targetNode.position.x) / 2,
+		y: (sourceNode.position.y + targetNode.position.y) / 2
+	})
+	
+	// Ajouter le node et reconnecter les edges
+	addNodes([newNode])
+	removeEdges([edge.id])
+	
+	const newEdge1 = {
+		id: `e-${edge.source}-${newNodeId}`,
+		source: edge.source,
+		sourceHandle: edge.sourceHandle,
+		target: newNodeId,
+		type: edge.sourceHandle ? 'simple-condition' : 'add-node',
+		label: edge.label || undefined
+	}
+	
+	const newEdge2 = {
+		id: `e-${newNodeId}-${edge.target}`,
+		source: newNodeId,
+		target: edge.target,
+		type: 'add-node'
+	}
+	
+	addEdges([newEdge1, newEdge2])
+	
+	// Mettre à jour les internals
+	await nextTick()
+	updateNodeInternals([newNodeId, edge.source, edge.target])
+	
+	// Lancer le layout
+	setTimeout(() => {
+		layoutGraph()
+	}, 200)
+}
+
+// Gérer le drop d'un type de node sur un add-element
+const handleDropOnAddElement = async (nodeType: string, addElementNode: Node) => {
+	const newNodeId = `${nodeType}-${Date.now()}`
+	
+	// Créer le nouveau node selon le type
+	const newNode = createNodeByType(nodeType, newNodeId, 1, addElementNode.position)
+	
+	// Sauvegarder les informations importantes du add-element AVANT de le remplacer
+	const addElementInfo = {
+		nodeId: addElementNode.id,
+		originalPosition: { ...addElementNode.position },
+		conditionBranch: addElementNode.data?.conditionBranch,
+		branchLabel: addElementNode.data?.branchLabel,
+		savedIncomingEdge: null,
+		savedOutgoingEdge: null
+	}
+	
+	// Sauvegarder les edges
+	const incomingEdge = edges.value.find(e => e.target === addElementNode.id)
+	const outgoingEdge = edges.value.find(e => e.source === addElementNode.id)
+	
+	if (incomingEdge) {
+		addElementInfo.savedIncomingEdge = { ...incomingEdge }
+	}
+	if (outgoingEdge) {
+		addElementInfo.savedOutgoingEdge = { ...outgoingEdge }
+	}
+	
+	// Marquer le nouveau node avec les infos de remplacement
+	newNode.data = {
+		...newNode.data,
+		createdFromAddElement: addElementInfo
+	}
+	
+	// Remplacer le add-element par le nouveau node
+	addNodes([newNode])
+	removeNodes([addElementNode.id])
+	
+	// Reconnecter les edges
+	if (incomingEdge) {
+		removeEdges([incomingEdge.id])
+		addEdges({
+			...incomingEdge,
+			target: newNodeId,
+			animated: false
+		})
+	}
+	
+	if (outgoingEdge) {
+		removeEdges([outgoingEdge.id])
+		addEdges({
+			...outgoingEdge,
+			source: newNodeId
+		})
+	}
+	
+	// Mettre à jour les internals
+	await nextTick()
+	updateNodeInternals([newNodeId])
+	
+	// Émettre l'événement de remplacement
+	setTimeout(() => {
+		handleAddElementReplaced({
+			oldNodeId: addElementNode.id,
+			newNodeId,
+			isDragDrop: true
+		})
+	}, 100)
+}
+
+// Fonction utilitaire pour créer un node selon son type
+const createNodeByType = (nodeType: string, nodeId: string, step: number, position: { x: number, y: number }) => {
+	const baseNode = {
+		id: nodeId,
+		type: nodeType,
+		position,
+		data: {
+			step: step.toString()
+		}
+	}
+	
+	switch (nodeType) {
+		case 'question':
+			return {
+				...baseNode,
+				data: {
+					...baseNode.data,
+					label: `Question ${step}`,
+					question: '',
+					questionType: 'checkbox',
+					options: [],
+					required: true
+				}
+			}
+		case 'audio':
+			return {
+				...baseNode,
+				data: {
+					...baseNode.data,
+					label: `Audio ${step}`,
+					audioTitle: '',
+					audioUrl: '',
+					duration: '',
+					autoPlay: false,
+					showControls: true
+				}
+			}
+		case 'condition':
+			return {
+				...baseNode,
+				data: {
+					...baseNode.data,
+					label: 'Nouvelle condition',
+					conditionType: 'single',
+					description: '',
+					branches: [
+						{ id: `${nodeId}-branch1`, label: 'Option 1', condition: '' },
+						{ id: `${nodeId}-branch2`, label: 'Option 2', condition: '' }
+					]
+				}
+			}
+		default:
+			return baseNode
+	}
+}
+
+// Gérer le drop sur la palette (annulation)
+const onPanelDrop = (event: DragEvent) => {
+	event.preventDefault()
+	console.log('🚫 Drop sur palette - Annulation du drag')
+	
+	// Nettoyer tous les états
+	isDraggingOver.value = false
+	hoveredEdgeId.value = null
+	hoveredAddElementId.value = null
+}
+
+// Gérer le dragover sur la palette
+const onPanelDragOver = (event: DragEvent) => {
+	event.preventDefault()
+	event.stopPropagation()
+}
+
+// Variable pour gérer l'état de dragover
+const isDraggingOver = ref(false)
+const hoveredEdgeId = ref<string | null>(null)
+const hoveredAddElementId = ref<string | null>(null)
+
+// Fournir hoveredAddElementId aux composants enfants
+provide('hoveredAddElementId', hoveredAddElementId)
+
+// Computed pour la position de l'indicateur de drop
+const edgeDropIndicatorStyle = computed(() => {
+	if (!hoveredEdgeId.value) return {}
+	
+	// Essayer de trouver le bouton directement dans le DOM
+	nextTick(() => {
+		// Chercher tous les boutons add-button
+		const buttons = document.querySelectorAll('.add-button')
+		console.log('🔍 Found', buttons.length, 'add buttons')
+		
+		buttons.forEach((btn, idx) => {
+			const rect = btn.getBoundingClientRect()
+			console.log(`Button ${idx}:`, rect)
+		})
+	})
+	
+	const edge = edges.value.find(e => e.id === hoveredEdgeId.value)
+	if (!edge) return {}
+	
+	const sourceNode = findNode(edge.source)
+	const targetNode = findNode(edge.target)
+	
+	if (!sourceNode || !targetNode) return {}
+	
+	// Chercher le bouton correspondant à cet edge dans le DOM
+	const edgeElement = document.querySelector(`[data-id="${edge.id}"]`)
+	const button = edgeElement?.querySelector('.add-button')
+	
+	if (button) {
+		const rect = button.getBoundingClientRect()
+		console.log('🎯 Found button for edge:', edge.id, rect)
+		
+		return {
+			position: 'fixed',
+			left: `${rect.left + rect.width / 2}px`,
+			top: `${rect.top + rect.height / 2}px`
+		}
+	}
+	
+	// Fallback: calculer manuellement
+	const sourceWidth = sourceNode.dimensions?.width || 150
+	const sourceHeight = sourceNode.dimensions?.height || 50
+	const targetWidth = targetNode.dimensions?.width || 150
+	const targetHeight = targetNode.dimensions?.height || 50
+	
+	const sourceX = sourceNode.position.x + sourceWidth / 2
+	const sourceY = sourceNode.position.y + sourceHeight
+	const targetX = targetNode.position.x + targetWidth / 2
+	const targetY = targetNode.position.y
+	
+	const pathData = getSmoothStepPath({
+		sourceX,
+		sourceY,
+		targetX,
+		targetY,
+		sourcePosition: 'bottom',
+		targetPosition: 'top'
+	})
+	
+	const x = pathData[1]
+	const y = pathData[2]
+	
+	// Obtenir le viewport de VueFlow
+	const vueFlowElement = document.querySelector('.vue-flow')
+	if (vueFlowElement) {
+		const rect = vueFlowElement.getBoundingClientRect()
+		
+		return {
+			position: 'fixed',
+			left: `${rect.left + x}px`,
+			top: `${rect.top + y}px`
+		}
+	}
+	
+	return {
+		left: `${x}px`,
+		top: `${y}px`
+	}
+})
+
+// Gérer le survol lors du drag
+const onDragOver = (event: DragEvent) => {
+	event.preventDefault()
+	if (event.dataTransfer) {
+		event.dataTransfer.dropEffect = 'move'
+		isDraggingOver.value = true
+		
+		// Obtenir l'élément VueFlow et la position
+		const flowElement = event.currentTarget as HTMLElement
+		const { left, top } = flowElement.getBoundingClientRect()
+		const position = project({
+			x: event.clientX - left,
+			y: event.clientY - top,
+		})
+		
+		// Réinitialiser les états de survol
+		hoveredEdgeId.value = null
+		hoveredAddElementId.value = null
+		
+		// Vérifier si on survole un edge avec bouton + avec une tolérance plus large
+		const addNodeEdges = edges.value.filter(e => e.type === 'add-node')
+		console.log('🔍 Checking hover, found', addNodeEdges.length, 'add-node edges')
+		let closestEdge = null
+		let minDistance = Infinity
+		const DETECTION_RADIUS = 80 // Augmenter le rayon de détection
+		
+		for (const edge of addNodeEdges) {
+			const sourceNode = findNode(edge.source)
+			const targetNode = findNode(edge.target)
+			
+			if (sourceNode && targetNode) {
+				// Calculer la position du bouton + (milieu de l'edge entre les handles)
+				const sourceWidth = sourceNode.dimensions?.width || 150
+				const sourceHeight = sourceNode.dimensions?.height || 50
+				const targetWidth = targetNode.dimensions?.width || 150
+				const targetHeight = targetNode.dimensions?.height || 50
+				
+				const sourceX = sourceNode.position.x + sourceWidth / 2
+				const sourceY = sourceNode.position.y + sourceHeight
+				const targetX = targetNode.position.x + targetWidth / 2
+				const targetY = targetNode.position.y
+				
+				const edgeCenterX = (sourceX + targetX) / 2
+				const edgeCenterY = (sourceY + targetY) / 2
+				
+				const distance = Math.sqrt(
+					Math.pow(position.x - edgeCenterX, 2) + 
+					Math.pow(position.y - edgeCenterY, 2)
+				)
+				
+				if (distance < minDistance && distance < DETECTION_RADIUS) {
+					minDistance = distance
+					closestEdge = edge
+				}
+			}
+		}
+		
+		if (closestEdge) {
+			hoveredEdgeId.value = closestEdge.id
+			console.log('🎯 Hovering edge:', closestEdge.id)
+		} else {
+			// Vérifier si on survole un node add-element avec une tolérance plus large
+			const hoveredNode = nodes.value.find(node => {
+				if (node.type !== 'add-element') return false
+				
+				const nodeWidth = node.dimensions?.width || 240
+				const nodeHeight = node.dimensions?.height || 100
+				const nodeLeft = node.position.x - 20 // Ajouter une marge
+				const nodeTop = node.position.y - 20
+				const nodeRight = nodeLeft + nodeWidth + 40
+				const nodeBottom = nodeTop + nodeHeight + 40
+				
+				return position.x >= nodeLeft && position.x <= nodeRight &&
+				       position.y >= nodeTop && position.y <= nodeBottom
+			})
+			
+			if (hoveredNode) {
+				hoveredAddElementId.value = hoveredNode.id
+			}
+		}
+	}
+}
+
+// Gérer la sortie du drag
+const onDragLeave = (event: DragEvent) => {
+	isDraggingOver.value = false
+	hoveredEdgeId.value = null
+	hoveredAddElementId.value = null
+}
 
 // Sauvegarder le workflow
 const saveWorkflow = (saveToFile = true) => {
@@ -3551,1045 +4370,6 @@ const handleDragStart = (nodeType: string, event: DragEvent) => {
 		event.dataTransfer.effectAllowed = 'move'
 	}
 }
-
-// Variable pour gérer l'état de dragover
-const isDraggingOver = ref(false)
-const hoveredEdgeId = ref<string | null>(null)
-const hoveredAddElementId = ref<string | null>(null)
-
-// Fournir hoveredAddElementId aux composants enfants
-provide('hoveredAddElementId', hoveredAddElementId)
-
-// Computed pour la position de l'indicateur de drop
-const edgeDropIndicatorStyle = computed(() => {
-	if (!hoveredEdgeId.value) return {}
-	
-	// Essayer de trouver le bouton directement dans le DOM
-	nextTick(() => {
-		// Chercher tous les boutons add-button
-		const buttons = document.querySelectorAll('.add-button')
-		console.log('🔍 Found', buttons.length, 'add buttons')
-		
-		buttons.forEach((btn, idx) => {
-			const rect = btn.getBoundingClientRect()
-			console.log(`Button ${idx}:`, rect)
-		})
-	})
-	
-	const edge = edges.value.find(e => e.id === hoveredEdgeId.value)
-	if (!edge) return {}
-	
-	const sourceNode = findNode(edge.source)
-	const targetNode = findNode(edge.target)
-	
-	if (!sourceNode || !targetNode) return {}
-	
-	// Chercher le bouton correspondant à cet edge dans le DOM
-	const edgeElement = document.querySelector(`[data-id="${edge.id}"]`)
-	const button = edgeElement?.querySelector('.add-button')
-	
-	if (button) {
-		const rect = button.getBoundingClientRect()
-		console.log('🎯 Found button for edge:', edge.id, rect)
-		
-		return {
-			position: 'fixed',
-			left: `${rect.left + rect.width / 2}px`,
-			top: `${rect.top + rect.height / 2}px`
-		}
-	}
-	
-	// Fallback: calculer manuellement
-	const sourceWidth = sourceNode.dimensions?.width || 150
-	const sourceHeight = sourceNode.dimensions?.height || 50
-	const targetWidth = targetNode.dimensions?.width || 150
-	const targetHeight = targetNode.dimensions?.height || 50
-	
-	const sourceX = sourceNode.position.x + sourceWidth / 2
-	const sourceY = sourceNode.position.y + sourceHeight
-	const targetX = targetNode.position.x + targetWidth / 2
-	const targetY = targetNode.position.y
-	
-	const pathData = getSmoothStepPath({
-		sourceX,
-		sourceY,
-		targetX,
-		targetY,
-		sourcePosition: 'bottom',
-		targetPosition: 'top'
-	})
-	
-	const x = pathData[1]
-	const y = pathData[2]
-	
-	// Obtenir le viewport de VueFlow
-	const vueFlowElement = document.querySelector('.vue-flow')
-	if (vueFlowElement) {
-		const rect = vueFlowElement.getBoundingClientRect()
-		
-		return {
-			position: 'fixed',
-			left: `${rect.left + x}px`,
-			top: `${rect.top + y}px`
-		}
-	}
-	
-	return {
-		left: `${x}px`,
-		top: `${y}px`
-	}
-})
-
-// Gérer le survol lors du drag
-const onDragOver = (event: DragEvent) => {
-	event.preventDefault()
-	if (event.dataTransfer) {
-		event.dataTransfer.dropEffect = 'move'
-		isDraggingOver.value = true
-		
-		// Obtenir l'élément VueFlow et la position
-		const flowElement = event.currentTarget as HTMLElement
-		const { left, top } = flowElement.getBoundingClientRect()
-		const position = project({
-			x: event.clientX - left,
-			y: event.clientY - top,
-		})
-		
-		// Réinitialiser les états de survol
-		hoveredEdgeId.value = null
-		hoveredAddElementId.value = null
-		
-		// Vérifier si on survole un edge avec bouton +
-		const addNodeEdges = edges.value.filter(e => e.type === 'add-node')
-		console.log('🔍 Checking hover, found', addNodeEdges.length, 'add-node edges')
-		let closestEdge = null
-		let minDistance = Infinity
-		
-		for (const edge of addNodeEdges) {
-			const sourceNode = findNode(edge.source)
-			const targetNode = findNode(edge.target)
-			
-			if (sourceNode && targetNode) {
-				// Calculer la position du bouton + (milieu de l'edge entre les handles)
-				const sourceWidth = sourceNode.dimensions?.width || 150
-				const sourceHeight = sourceNode.dimensions?.height || 50
-				const targetWidth = targetNode.dimensions?.width || 150
-				const targetHeight = targetNode.dimensions?.height || 50
-				
-				const sourceX = sourceNode.position.x + sourceWidth / 2
-				const sourceY = sourceNode.position.y + sourceHeight
-				const targetX = targetNode.position.x + targetWidth / 2
-				const targetY = targetNode.position.y
-				
-				const edgeCenterX = (sourceX + targetX) / 2
-				const edgeCenterY = (sourceY + targetY) / 2
-				
-				const distance = Math.sqrt(
-					Math.pow(position.x - edgeCenterX, 2) + 
-					Math.pow(position.y - edgeCenterY, 2)
-				)
-				
-				if (distance < minDistance && distance < 150) {
-					minDistance = distance
-					closestEdge = edge
-				}
-			}
-		}
-		
-		if (closestEdge) {
-			hoveredEdgeId.value = closestEdge.id
-			console.log('🎯 Hovering edge:', closestEdge.id)
-		} else {
-			// Vérifier si on survole un node add-element
-			const allNodes = nodes.value
-			const hoveredNode = allNodes.find(node => {
-				if (node.type !== 'add-element') return false
-				
-				const nodeWidth = node.dimensions?.width || 240
-				const nodeHeight = node.dimensions?.height || 100
-				const nodeLeft = node.position.x
-				const nodeTop = node.position.y
-				const nodeRight = nodeLeft + nodeWidth
-				const nodeBottom = nodeTop + nodeHeight
-				
-				return position.x >= nodeLeft && position.x <= nodeRight &&
-				       position.y >= nodeTop && position.y <= nodeBottom
-			})
-			
-			if (hoveredNode) {
-				hoveredAddElementId.value = hoveredNode.id
-			}
-		}
-	}
-}
-
-// Gérer la sortie du drag
-const onDragLeave = (event: DragEvent) => {
-	isDraggingOver.value = false
-	hoveredEdgeId.value = null
-	hoveredAddElementId.value = null
-}
-
-// Gérer le drop d'un élément
-const onDrop = (event: DragEvent) => {
-	console.log('🎯 onDrop called', event)
-	event.preventDefault()
-	isDraggingOver.value = false
-	hoveredEdgeId.value = null
-	hoveredAddElementId.value = null
-	
-	if (!event.dataTransfer) {
-		console.log('❌ No dataTransfer')
-		return
-	}
-	
-	const nodeType = event.dataTransfer.getData('application/vueflow')
-	console.log('📦 Node type from drag:', nodeType)
-	if (!nodeType) {
-		console.log('❌ No node type')
-		return
-	}
-	
-	// Note: La vérification du panel est maintenant gérée par onPanelDrop avec @drop.stop
-	
-	// Obtenir l'élément VueFlow 
-	const flowElement = event.currentTarget as HTMLElement
-	const { left, top } = flowElement.getBoundingClientRect()
-	console.log('📐 Flow element bounds:', { left, top })
-	
-	// Utiliser project pour convertir les coordonnées écran en coordonnées flow
-	const position = project({
-		x: event.clientX - left,
-		y: event.clientY - top,
-	})
-	console.log('📍 Projected position:', position)
-	console.log('🖱️ Mouse position:', { x: event.clientX, y: event.clientY })
-	
-	// Vérifier si on a droppé sur un élément spécifique
-	const targetElement = event.target as HTMLElement
-	console.log('🎯 Target element:', targetElement)
-	console.log('🎯 Target classes:', targetElement.className)
-	console.log('🎯 Target parent:', targetElement.parentElement?.className)
-	
-	// Vérifier si on a droppé sur un bouton "+" dans un edge
-	// Chercher dans toute la hiérarchie DOM car VueFlow peut avoir une structure complexe
-	let checkElement = targetElement
-	let addButton = null
-	let maxDepth = 10 // Limiter la profondeur de recherche
-	
-	while (checkElement && maxDepth > 0) {
-		if (checkElement.classList && checkElement.classList.contains('add-button')) {
-			addButton = checkElement
-			break
-		}
-		// Vérifier aussi les enfants directs
-		const childButton = checkElement.querySelector('.add-button')
-		if (childButton && childButton.contains(targetElement)) {
-			addButton = childButton
-			break
-		}
-		checkElement = checkElement.parentElement
-		maxDepth--
-	}
-	
-	console.log('🔍 Add button search result:', addButton)
-	
-	if (addButton) {
-		console.log('🎯 Drop sur un bouton + détecté!')
-		
-		// Trouver l'edge qui a un bouton + à cette position
-		// Les edges de type 'add-node' ont des boutons +
-		const addNodeEdges = edges.value.filter(e => e.type === 'add-node')
-		console.log('📊 Edges with add buttons:', addNodeEdges.length)
-		
-		// Trouver l'edge le plus proche de la position du drop
-		let closestEdge = null
-		let minDistance = Infinity
-		
-		for (const edge of addNodeEdges) {
-			const sourceNode = findNode(edge.source)
-			const targetNode = findNode(edge.target)
-			
-			if (sourceNode && targetNode) {
-				// Calculer la position du bouton + (milieu de l'edge entre les handles)
-				const sourceWidth = sourceNode.dimensions?.width || 150
-				const sourceHeight = sourceNode.dimensions?.height || 50
-				const targetWidth = targetNode.dimensions?.width || 150
-				const targetHeight = targetNode.dimensions?.height || 50
-				
-				const sourceX = sourceNode.position.x + sourceWidth / 2
-				const sourceY = sourceNode.position.y + sourceHeight
-				const targetX = targetNode.position.x + targetWidth / 2
-				const targetY = targetNode.position.y
-				
-				const edgeCenterX = (sourceX + targetX) / 2
-				const edgeCenterY = (sourceY + targetY) / 2
-				
-				// Distance entre la position du drop et le centre de l'edge
-				const distance = Math.sqrt(
-					Math.pow(position.x - edgeCenterX, 2) + 
-					Math.pow(position.y - edgeCenterY, 2)
-				)
-				
-				console.log(`📏 Edge ${edge.id} distance:`, distance, { edgeCenter: { x: edgeCenterX, y: edgeCenterY } })
-				
-				if (distance < minDistance && distance < 150) { // 150px de tolérance augmentée
-					minDistance = distance
-					closestEdge = edge
-				}
-			}
-		}
-		
-		if (closestEdge) {
-			console.log('📍 Edge trouvé:', closestEdge)
-			// Utiliser la logique existante du QuestionnaireAddNodeEdge
-			handleDropOnAddButton(closestEdge, nodeType)
-			return
-		} else {
-			console.log('❌ Aucun edge trouvé proche du bouton')
-		}
-	} else {
-		// Si pas de bouton +, vérifier si on a droppé près d'un edge
-		console.log('🔍 Recherche d\'un edge proche de la position du drop')
-		const allEdges = edges.value
-		let closestEdge = null
-		let minDistance = Infinity
-		
-		for (const edge of allEdges) {
-			if (edge.type !== 'add-node') continue // Seulement les edges avec bouton +
-			
-			const sourceNode = findNode(edge.source)
-			const targetNode = findNode(edge.target)
-			
-			if (sourceNode && targetNode) {
-				// Calculer la distance du point au segment de l'edge
-				const x1 = sourceNode.position.x + (sourceNode.dimensions?.width || 150) / 2
-				const y1 = sourceNode.position.y + (sourceNode.dimensions?.height || 50)
-				const x2 = targetNode.position.x + (targetNode.dimensions?.width || 150) / 2
-				const y2 = targetNode.position.y
-				
-				// Distance point to line segment
-				const A = position.x - x1
-				const B = position.y - y1
-				const C = x2 - x1
-				const D = y2 - y1
-				
-				const dot = A * C + B * D
-				const lenSq = C * C + D * D
-				let param = -1
-				
-				if (lenSq !== 0) {
-					param = dot / lenSq
-				}
-				
-				let xx, yy
-				
-				if (param < 0) {
-					xx = x1
-					yy = y1
-				} else if (param > 1) {
-					xx = x2
-					yy = y2
-				} else {
-					xx = x1 + param * C
-					yy = y1 + param * D
-				}
-				
-				const distance = Math.sqrt(Math.pow(position.x - xx, 2) + Math.pow(position.y - yy, 2))
-				
-				if (distance < minDistance && distance < 30) { // 30px de tolérance pour les edges
-					minDistance = distance
-					closestEdge = edge
-				}
-			}
-		}
-		
-		if (closestEdge) {
-			console.log('📍 Edge proche trouvé:', closestEdge)
-			handleDropOnAddButton(closestEdge, nodeType)
-			return
-		}
-	}
-	
-	// Vérifier si on a droppé sur un node add-element
-	const allNodes = nodes.value
-	console.log('📊 Total nodes:', allNodes.length)
-	console.log('📊 Add-element nodes:', allNodes.filter(n => n.type === 'add-element').length)
-	
-	// Vérifier d'abord si on a cliqué directement sur un node add-element
-	const addElementNode = targetElement.closest('.add-element-node')
-	if (addElementNode) {
-		// Trouver le node par son élément DOM
-		const nodeElement = addElementNode.closest('.vue-flow__node')
-		if (nodeElement) {
-			const nodeId = nodeElement.getAttribute('data-id')
-			console.log('🎯 Found add-element node by DOM, ID:', nodeId)
-			const node = allNodes.find(n => n.id === nodeId)
-			if (node && node.type === 'add-element') {
-				console.log('🎯 Drop sur un node add-element détecté (via DOM):', node.id)
-				handleDropOnAddElement(node, nodeType)
-				return
-			}
-		}
-	}
-	
-	// Sinon, chercher par position
-	const droppedNode = allNodes.find(node => {
-		if (node.type !== 'add-element') return false
-		
-		// Calculer si la position du drop est dans les limites du node
-		const nodeWidth = node.dimensions?.width || 240
-		const nodeHeight = node.dimensions?.height || 100
-		const nodeLeft = node.position.x
-		const nodeTop = node.position.y
-		const nodeRight = nodeLeft + nodeWidth
-		const nodeBottom = nodeTop + nodeHeight
-		
-		console.log(`🔍 Checking add-element node ${node.id}:`, {
-			nodePosition: { x: nodeLeft, y: nodeTop },
-			nodeBounds: { left: nodeLeft, top: nodeTop, right: nodeRight, bottom: nodeBottom },
-			dropPosition: position,
-			isInBounds: position.x >= nodeLeft && position.x <= nodeRight &&
-			           position.y >= nodeTop && position.y <= nodeBottom
-		})
-		
-		return position.x >= nodeLeft && position.x <= nodeRight &&
-		       position.y >= nodeTop && position.y <= nodeBottom
-	})
-	
-	if (droppedNode) {
-		console.log('🎯 Drop sur un node add-element détecté:', droppedNode.id)
-		// Simuler un clic sur le bon bouton du node add-element
-		handleDropOnAddElement(droppedNode, nodeType)
-		return
-	}
-	
-	// Ne pas créer de node dans le vide - annuler le drop
-	console.log('🚫 Drop dans le vide - annulation (pas de connexion à la structure existante)')
-}
-
-// Gérer le drop sur le panel (annulation)
-const onPanelDrop = (event: DragEvent) => {
-	event.preventDefault()
-	event.stopPropagation()
-	console.log('✅ Drop dans le panel - annulation du drag')
-	// Réinitialiser les états
-	isDraggingOver.value = false
-	hoveredEdgeId.value = null
-	hoveredAddElementId.value = null
-	// Ne rien faire d'autre, l'élément est simplement annulé
-}
-
-// Gérer le survol du panel
-const onPanelDragOver = (event: DragEvent) => {
-	event.preventDefault()
-	event.stopPropagation()
-	if (event.dataTransfer) {
-		event.dataTransfer.dropEffect = 'none' // Indiquer que le drop sera annulé
-	}
-	// Réinitialiser les états de survol
-	hoveredEdgeId.value = null
-	hoveredAddElementId.value = null
-}
-
-// Gérer le drop sur un bouton "+" dans un edge
-const handleDropOnAddButton = async (edge: Edge, nodeType: string) => {
-	console.log('🔄 Traitement du drop sur bouton +', { edge, nodeType })
-	
-	const sourceNode = findNode(edge.source)
-	const targetNode = findNode(edge.target)
-	
-	if (!sourceNode || !targetNode) return
-	
-	const newNodeId = `${nodeType}-${Date.now()}`
-	const sourceStep = parseInt(sourceNode.data.step) || 0
-	const newStep = sourceStep + 1
-	
-	// Position au milieu de l'edge
-	const position = {
-		x: (sourceNode.position.x + targetNode.position.x) / 2,
-		y: (sourceNode.position.y + targetNode.position.y) / 2
-	}
-	
-	// Créer les données selon le type
-	let nodeData = {}
-	switch (nodeType) {
-		case 'question':
-			nodeData = {
-				step: newStep.toString(),
-				label: `Question ${newStep}`,
-				question: '',
-				questionType: 'checkbox',
-				options: [],
-				required: true
-			}
-			break
-		case 'audio':
-			nodeData = {
-				step: newStep.toString(),
-				label: `Audio ${newStep}`,
-				audioTitle: '',
-				audioUrl: '',
-				duration: '',
-				autoPlay: false,
-				showControls: true
-			}
-			break
-		case 'condition':
-			// Pour une condition, on va utiliser la logique plus complexe
-			handleDropConditionOnAddButton(edge)
-			return
-	}
-	
-	// Créer le nouveau node
-	const newNode = {
-		id: newNodeId,
-		type: nodeType,
-		position,
-		data: nodeData
-	}
-	
-	// Ajouter le node
-	addNodes([newNode])
-	
-	// Supprimer l'edge existant
-	removeEdges([edge.id])
-	
-	// Créer les nouveaux edges
-	const newEdge1 = {
-		id: `e-${edge.source}-${newNodeId}`,
-		source: edge.source,
-		sourceHandle: edge.sourceHandle,
-		target: newNodeId,
-		type: 'add-node'
-	}
-	
-	const newEdge2 = {
-		id: `e-${newNodeId}-${edge.target}`,
-		source: newNodeId,
-		target: edge.target,
-		type: 'add-node'
-	}
-	
-	addEdges([newEdge1, newEdge2])
-	
-	// Mettre à jour les internals
-	await nextTick()
-	updateNodeInternals([newNodeId, edge.source, edge.target])
-	
-	// Lancer le layout
-	layoutGraph()
-}
-
-// Gérer le drop d'une condition sur un bouton "+"
-const handleDropConditionOnAddButton = async (edge: Edge) => {
-	const sourceNode = findNode(edge.source)
-	const targetNode = findNode(edge.target)
-	
-	if (!sourceNode || !targetNode) return
-	
-	const baseX = (sourceNode.position.x + targetNode.position.x) / 2
-	const baseY = (sourceNode.position.y + targetNode.position.y) / 2
-	
-	const conditionNodeId = `condition-${Date.now()}`
-	const sourceStep = parseInt(sourceNode.data.step) || 0
-	const newStep = sourceStep + 1
-	
-	const conditionNode = {
-		id: conditionNodeId,
-		type: 'condition',
-		position: { x: baseX, y: baseY },
-		data: {
-			step: newStep.toString(),
-			label: 'Nouvelle condition',
-			conditionType: 'single',
-			description: '',
-			branches: [
-				{ id: `${conditionNodeId}-branch1`, label: 'Option 1', condition: '' },
-				{ id: `${conditionNodeId}-branch2`, label: 'Option 2', condition: '' }
-			]
-		}
-	}
-	
-	// Créer les nodes add-element pour les branches
-	const addElementNodes = conditionNode.data.branches.map((branch, index) => {
-		const totalBranches = conditionNode.data.branches.length
-		const spaceBetweenNodes = 200
-		const offset = (index - (totalBranches - 1) / 2) * spaceBetweenNodes
-		const nodeX = baseX + offset - 120
-		
-		return {
-			id: `${conditionNodeId}-${branch.id}-ghost`,
-			type: 'add-element',
-			position: {
-				x: nodeX,
-				y: baseY + 150
-			},
-			data: {
-				label: `Suite: ${branch.label}`,
-				isGhost: true,
-				conditionBranch: branch.id,
-				branchLabel: branch.label
-			}
-		}
-	})
-	
-	// Ajouter tous les nodes
-	addNodes([conditionNode, ...addElementNodes])
-	removeEdges([edge.id])
-	
-	// Créer les edges
-	const edgeToCondition = {
-		id: `e-${edge.source}-${conditionNodeId}`,
-		source: edge.source,
-		sourceHandle: edge.sourceHandle,
-		target: conditionNodeId,
-		type: 'add-node'
-	}
-	
-	const branchEdges = conditionNode.data.branches.map((branch) => ({
-		id: `e-${conditionNodeId}-${branch.id}`,
-		source: conditionNodeId,
-		sourceHandle: branch.id,
-		target: `${conditionNodeId}-${branch.id}-ghost`,
-		type: 'simple-condition',
-		label: branch.label,
-		animated: true
-	}))
-	
-	// Connecter le premier add-element au node cible original
-	const firstAddElementToTarget = {
-		id: `e-${addElementNodes[0].id}-${edge.target}`,
-		source: addElementNodes[0].id,
-		target: edge.target,
-		type: 'add-node'
-	}
-	
-	// Créer des nodes end pour les autres branches
-	const endNodesForAddElements = addElementNodes.slice(1).map((addElementNode) => ({
-		id: `${addElementNode.id}-end`,
-		type: 'end',
-		position: {
-			x: addElementNode.position.x,
-			y: addElementNode.position.y + 150
-		},
-		data: {
-			label: 'Fin du questionnaire',
-			message: 'Merci d\'avoir complété ce questionnaire !'
-		}
-	}))
-	
-	const addNodeEdges = addElementNodes.slice(1).map((addElementNode) => ({
-		id: `e-${addElementNode.id}-add`,
-		source: addElementNode.id,
-		target: `${addElementNode.id}-end`,
-		type: 'add-node'
-	}))
-	
-	// Ajouter les nodes end et tous les edges
-	addNodes(endNodesForAddElements)
-	addEdges([edgeToCondition, ...branchEdges, ...addNodeEdges, firstAddElementToTarget])
-	
-	// Mettre à jour les internals
-	await nextTick()
-	const allNewNodeIds = [conditionNodeId, ...addElementNodes.map(n => n.id)]
-	updateNodeInternals(allNewNodeIds)
-	
-	// Lancer le layout
-	layoutGraph()
-}
-
-// Gérer le drop sur un node add-element
-const handleDropOnAddElement = async (addElementNode: Node, nodeType: string) => {
-	console.log('🔄 Simulation du clic sur add-element pour:', nodeType)
-	console.log('📌 Node à remplacer:', addElementNode)
-	
-	// Trouver le composant AddElementNode et déclencher son addNode
-	// Pour cela, on va émuler le comportement du composant AddElementNode
-	
-	const currentNode = addElementNode
-	const newNodeId = `${nodeType}-${Date.now()}`
-	
-	// Obtenir les edges connectés AVANT toute modification
-	const allEdgesBefore = edges.value
-	const incomingEdges = allEdgesBefore.filter(edge => edge.target === currentNode.id)
-	const outgoingEdges = allEdgesBefore.filter(edge => edge.source === currentNode.id)
-	
-	console.log('📊 Edges avant suppression:')
-	console.log('  - Incoming edges:', incomingEdges)
-	console.log('  - Outgoing edges:', outgoingEdges)
-	
-	// Préparer les données du nouveau node
-	let nodeData = {}
-	switch (nodeType) {
-		case 'question':
-			nodeData = {
-				label: 'Nouvelle question',
-				question: '',
-				questionType: 'radio',
-				options: ['Option 1', 'Option 2'],
-				required: true,
-				step: `${Date.now()}`
-			}
-			break
-		case 'audio':
-			nodeData = {
-				label: 'Nouvel audio',
-				audioUrl: '',
-				audioTitle: 'Audio configuré',
-				autoPlay: true,
-				duration: '0:00',
-				step: `${Date.now()}`
-			}
-			break
-		case 'condition':
-			// Pour une condition sur un add-element, utiliser une logique spéciale
-			handleDropConditionOnAddElement(addElementNode)
-			return
-	}
-	
-	// Sauvegarder les informations pour la restauration
-	const addElementInfo = {
-		nodeId: currentNode.id,
-		conditionBranch: currentNode.data.conditionBranch,
-		branchLabel: currentNode.data.branchLabel,
-		originalPosition: {
-			x: currentNode.position.x,
-			y: currentNode.position.y
-		},
-		savedIncomingEdge: incomingEdges.length > 0 ? { ...incomingEdges[0] } : null,
-		savedOutgoingEdge: outgoingEdges.length > 0 ? { ...outgoingEdges[0] } : null
-	}
-	
-	// Créer le nouveau node
-	const newNode = {
-		id: newNodeId,
-		type: nodeType,
-		position: {
-			x: currentNode.position.x,
-			y: currentNode.position.y
-		},
-		data: {
-			...nodeData,
-			createdFromAddElement: addElementInfo
-		}
-	}
-	
-	console.log('🗑️ Suppression des edges:', [...incomingEdges.map(e => e.id), ...outgoingEdges.map(e => e.id)])
-	
-	// Supprimer les edges existants
-	removeEdges([...incomingEdges, ...outgoingEdges])
-	
-	console.log('🗑️ Suppression du node:', currentNode.id)
-	
-	// Supprimer l'ancien node
-	removeNodes([currentNode.id])
-	
-	console.log('➕ Ajout du nouveau node:', newNode)
-	
-	// Ajouter le nouveau node
-	addNodes(newNode)
-	
-	// Attendre que le node soit ajouté
-	await nextTick()
-	
-	console.log('🔗 Reconnexion des edges entrants...')
-	
-	// Reconnecter les edges entrants (depuis la condition ou autre)
-	const newIncomingEdges = []
-	incomingEdges.forEach(edge => {
-		const newEdgeId = edge.sourceHandle 
-			? `e-${edge.source}-${edge.sourceHandle}-${newNodeId}`
-			: `e-${edge.source}-${newNodeId}`
-		
-		const newEdge = {
-			id: newEdgeId,
-			source: edge.source,
-			sourceHandle: edge.sourceHandle, // IMPORTANT: Préserver le sourceHandle pour les conditions
-			target: newNodeId,
-			targetHandle: edge.targetHandle,
-			type: edge.type || 'smoothstep',
-			animated: edge.animated !== undefined ? edge.animated : false,
-			label: edge.label, // Préserver le label si présent
-			data: edge.data // Préserver les données
-		}
-		
-		console.log('  - Ajout edge entrant:', newEdge)
-		newIncomingEdges.push(newEdge)
-	})
-	
-	if (newIncomingEdges.length > 0) {
-		addEdges(newIncomingEdges)
-	}
-	
-	console.log('🔗 Gestion des edges sortants...')
-	
-	// Gérer les edges sortants
-	if (nodeType !== 'end') {
-		if (outgoingEdges.length > 0) {
-			console.log('  - Reconnexion des edges sortants existants')
-			// Reconnecter les edges sortants vers les nodes existants
-			const newOutgoingEdges = []
-			outgoingEdges.forEach(edge => {
-				const newOutgoingEdgeId = `e-${newNodeId}-${edge.target}`
-				const newOutgoingEdge = {
-					id: newOutgoingEdgeId,
-					source: newNodeId,
-					sourceHandle: edge.sourceHandle,
-					target: edge.target,
-					targetHandle: edge.targetHandle,
-					type: edge.type || 'add-node',
-					animated: edge.animated || false,
-					label: edge.label,
-					data: edge.data
-				}
-				console.log('  - Ajout edge sortant:', newOutgoingEdge)
-				newOutgoingEdges.push(newOutgoingEdge)
-			})
-			
-			if (newOutgoingEdges.length > 0) {
-				addEdges(newOutgoingEdges)
-			}
-		} else {
-			console.log('  - Pas d\'edges sortants, création d\'un node end')
-			// Si pas d'edges sortants, créer un node end
-			const endId = `${newNodeId}-end`
-			const endNode = {
-				id: endId,
-				type: 'end',
-				position: {
-					x: currentNode.position.x,
-					y: currentNode.position.y + 150
-				},
-				data: {
-					label: 'Fin du questionnaire',
-					message: 'Merci d\'avoir complété ce questionnaire !'
-				}
-			}
-			
-			console.log('  - Création node end:', endNode)
-			addNodes(endNode)
-			
-			const endEdge = {
-				id: `e-${newNodeId}-${endId}`,
-				source: newNodeId,
-				target: endId,
-				type: 'add-node'
-			}
-			
-			console.log('  - Création edge vers end:', endEdge)
-			addEdges(endEdge)
-		}
-	}
-	
-	// Mettre à jour les internals
-	await nextTick()
-	
-	// Attendre un peu plus pour s'assurer que tout est bien ajouté
-	await new Promise(resolve => setTimeout(resolve, 100))
-	
-	console.log('🔄 Mise à jour des internals...')
-	updateNodeInternals([newNodeId])
-	
-	// Vérifier les edges après ajout
-	console.log('📊 Vérification finale des edges:')
-	const finalIncoming = edges.value.filter(e => e.target === newNodeId)
-	const finalOutgoing = edges.value.filter(e => e.source === newNodeId)
-	console.log('  - Edges entrants vers le nouveau node:', finalIncoming)
-	console.log('  - Edges sortants du nouveau node:', finalOutgoing)
-	
-	// Forcer le rafraîchissement
-	triggerRef(edges)
-	triggerRef(nodes)
-	
-	// Émettre l'événement de remplacement avec un flag pour le drag and drop
-	handleAddElementReplaced({
-		oldNodeId: currentNode.id,
-		newNodeId: newNodeId,
-		newNodeType: nodeType,
-		edgeInfo: incomingEdges[0],
-		isDragDrop: true // Flag pour indiquer que c'est un drag and drop
-	})
-}
-
-// Gérer le drop d'une condition sur un add-element
-const handleDropConditionOnAddElement = (addElementNode: Node) => {
-	console.log('🔄 Drop condition sur add-element:', addElementNode.id)
-	
-	// Pour une condition, on doit créer la structure complète
-	const conditionNodeId = `condition-${Date.now()}`
-	const baseX = addElementNode.position.x
-	const baseY = addElementNode.position.y
-	
-	// Obtenir les edges connectés
-	const incomingEdges = edges.value.filter(edge => edge.target === addElementNode.id)
-	const outgoingEdges = edges.value.filter(edge => edge.source === addElementNode.id)
-	
-	const conditionNode = {
-		id: conditionNodeId,
-		type: 'condition',
-		position: { x: baseX, y: baseY },
-		data: {
-			label: 'Nouvelle condition',
-			conditionType: 'single',
-			description: '',
-			branches: [
-				{ id: `${conditionNodeId}-branch1`, label: 'Option 1', condition: '' },
-				{ id: `${conditionNodeId}-branch2`, label: 'Option 2', condition: '' }
-			],
-			createdFromAddElement: {
-				nodeId: addElementNode.id,
-				conditionBranch: addElementNode.data.conditionBranch,
-				branchLabel: addElementNode.data.branchLabel,
-				originalPosition: {
-					x: addElementNode.position.x,
-					y: addElementNode.position.y
-				},
-				savedIncomingEdge: incomingEdges.length > 0 ? { ...incomingEdges[0] } : null,
-				savedOutgoingEdge: outgoingEdges.length > 0 ? { ...outgoingEdges[0] } : null
-			}
-		}
-	}
-	
-	// Créer les nodes add-element pour les branches
-	const addElementNodes = conditionNode.data.branches.map((branch, index) => {
-		const totalBranches = conditionNode.data.branches.length
-		const spaceBetweenNodes = 200
-		const offset = (index - (totalBranches - 1) / 2) * spaceBetweenNodes
-		const nodeX = baseX + offset - 120
-		
-		return {
-			id: `${conditionNodeId}-${branch.id}-ghost`,
-			type: 'add-element',
-			position: {
-				x: nodeX,
-				y: baseY + 150
-			},
-			data: {
-				label: `Suite: ${branch.label}`,
-				isGhost: true,
-				conditionBranch: branch.id,
-				branchLabel: branch.label
-			}
-		}
-	})
-	
-	// Supprimer les edges existants
-	removeEdges([...incomingEdges, ...outgoingEdges])
-	
-	// Supprimer l'ancien node
-	removeNodes([addElementNode.id])
-	
-	// Ajouter le node condition et les add-elements
-	addNodes([conditionNode, ...addElementNodes])
-	
-	// Reconnecter les edges entrants
-	incomingEdges.forEach(edge => {
-		const newEdgeId = edge.sourceHandle 
-			? `e-${edge.source}-${edge.sourceHandle}-${conditionNodeId}`
-			: `e-${edge.source}-${conditionNodeId}`
-			
-		addEdges({
-			...edge,
-			id: newEdgeId,
-			source: edge.source,
-			sourceHandle: edge.sourceHandle, // Préserver le sourceHandle
-			target: conditionNodeId,
-			type: edge.type || 'add-node',
-			animated: edge.animated !== undefined ? edge.animated : false,
-			label: edge.label // Préserver le label si présent
-		})
-	})
-	
-	// Créer les edges vers les branches
-	const branchEdges = conditionNode.data.branches.map((branch) => ({
-		id: `e-${conditionNodeId}-${branch.id}`,
-		source: conditionNodeId,
-		sourceHandle: branch.id,
-		target: `${conditionNodeId}-${branch.id}-ghost`,
-		type: 'simple-condition',
-		label: branch.label,
-		animated: true
-	}))
-	
-	addEdges(branchEdges)
-	
-	// Gérer la connexion sortante
-	if (outgoingEdges.length > 0) {
-		// Connecter le premier add-element à la cible originale
-		addEdges({
-			id: `e-${addElementNodes[0].id}-${outgoingEdges[0].target}`,
-			source: addElementNodes[0].id,
-			target: outgoingEdges[0].target,
-			type: 'add-node'
-		})
-		
-		// Créer des nodes end pour les autres branches
-		const endNodes = addElementNodes.slice(1).map((addElementNode) => ({
-			id: `${addElementNode.id}-end`,
-			type: 'end',
-			position: {
-				x: addElementNode.position.x,
-				y: addElementNode.position.y + 150
-			},
-			data: {
-				label: 'Fin du questionnaire',
-				message: 'Merci d\'avoir complété ce questionnaire !'
-			}
-		}))
-		
-		addNodes(endNodes)
-		
-		const endEdges = addElementNodes.slice(1).map((addElementNode) => ({
-			id: `e-${addElementNode.id}-add`,
-			source: addElementNode.id,
-			target: `${addElementNode.id}-end`,
-			type: 'add-node'
-		}))
-		
-		addEdges(endEdges)
-	} else {
-		// Si pas de connexion sortante, créer des nodes end pour toutes les branches
-		const endNodes = addElementNodes.map((addElementNode) => ({
-			id: `${addElementNode.id}-end`,
-			type: 'end',
-			position: {
-				x: addElementNode.position.x,
-				y: addElementNode.position.y + 150
-			},
-			data: {
-				label: 'Fin du questionnaire',
-				message: 'Merci d\'avoir complété ce questionnaire !'
-			}
-		}))
-		
-		addNodes(endNodes)
-		
-		const endEdges = addElementNodes.map((addElementNode) => ({
-			id: `e-${addElementNode.id}-add`,
-			source: addElementNode.id,
-			target: `${addElementNode.id}-end`,
-			type: 'add-node'
-		}))
-		
-		addEdges(endEdges)
-	}
-	
-	// Mettre à jour les internals
-	nextTick(() => {
-		const allNewNodeIds = [conditionNodeId, ...addElementNodes.map(n => n.id)]
-		updateNodeInternals(allNewNodeIds)
-	})
-	
-	// Émettre l'événement
-	handleAddElementReplaced({
-		oldNodeId: addElementNode.id,
-		newNodeId: conditionNodeId,
-		newNodeType: 'condition',
-		edgeInfo: incomingEdges[0]
-	})
-}
-
 </script>
 
 <template>
@@ -4695,20 +4475,21 @@ const handleDropConditionOnAddElement = (addElementNode: Node) => {
 			</div>
 			
 			<VueFlow
-				v-model:nodes="nodes"
-				v-model:edges="edges"
-				:default-zoom="1"
-				:min-zoom="0.5"
-				:max-zoom="2"
-				:default-edge-options="{ type: 'add-node' }"
-				:connection-validator="isValidConnection"
-				pan-on-scroll
-				:class="{ 'drag-over': isDraggingOver }"
-				@connect="handleConnect"
-				@drop="onDrop"
-				@dragover="onDragOver"
-				@dragleave="onDragLeave"
-			>
+  v-model:nodes="nodes"
+  v-model:edges="edges"
+  :node-types="nodeTypes"
+  :default-zoom="1"
+  :min-zoom="0.5"
+  :max-zoom="2"
+  :default-edge-options="{ type: 'add-node' }"
+  :connection-validator="isValidConnection"
+  pan-on-scroll
+  :class="{ 'drag-over': isDraggingOver }"
+  @connect="handleConnect"
+  @drop="onDrop"
+  @dragover="onDragOver"
+  @dragleave="onDragLeave"
+>
 				<Background pattern-color="#e0e0e6" :size="0.8" :gap="16" />
 				
 				<Panel class="process-panel" position="top-right">
