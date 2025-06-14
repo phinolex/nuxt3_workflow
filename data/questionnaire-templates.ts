@@ -72,6 +72,7 @@ export const emotionalLiberationTemplate: QuestionnaireTemplate = {
       id: 'condition1',
       type: 'condition',
       position: { x: 0, y: 400 },
+      draggable: false,
       data: {
         step: '5',
         label: 'Redirection audio',
@@ -182,6 +183,7 @@ export const satisfactionClientTemplate: QuestionnaireTemplate = {
       id: 'condition1',
       type: 'condition',
       position: { x: 0, y: 200 },
+      draggable: false,
       data: {
         step: '3',
         label: 'Vérifier satisfaction',
@@ -329,6 +331,7 @@ export const evaluationEmployeTemplate: QuestionnaireTemplate = {
       id: 'condition1',
       type: 'condition',
       position: { x: 0, y: 500 },
+      draggable: false,
       data: {
         step: '6',
         label: 'Besoins de formation',
@@ -545,6 +548,7 @@ export const questionnaireComplexeTemplate: QuestionnaireTemplate = {
       id: 'condition-profile',
       type: 'condition',
       position: { x: 0, y: 200 },
+      draggable: false,
       data: {
         step: '3',
         label: 'Orientation profil',
@@ -646,6 +650,7 @@ export const questionnaireComplexeTemplate: QuestionnaireTemplate = {
       id: 'condition-manager-stress',
       type: 'condition',
       position: { x: -200, y: 500 },
+      draggable: false,
       data: {
         step: '6b',
         label: 'Niveau de stress',
@@ -789,6 +794,7 @@ export const questionnaireComplexeTemplate: QuestionnaireTemplate = {
       id: 'condition-final',
       type: 'condition',
       position: { x: 0, y: 900 },
+      draggable: false,
       data: {
         step: '10',
         label: 'Analyse finale',

@@ -166,11 +166,11 @@ const getBranches = () => {
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.08);
   transition: all 0.2s ease;
   position: relative;
-  cursor: grab;
+  cursor: default; /* Les nodes condition ne sont pas draggable */
 }
 
 .condition-node:active {
-  cursor: grabbing;
+  cursor: default; /* Les nodes condition ne sont pas draggable */
 }
 
 .condition-node:hover {
@@ -179,10 +179,7 @@ const getBranches = () => {
   transform: translateY(-1px);
 }
 
-.condition-node.is-dragging {
-  opacity: 0.5;
-  cursor: grabbing;
-}
+/* Supprimé car les nodes condition ne sont pas draggable */
 
 .condition-node.selected {
   border-color: #f0a020;

@@ -58,6 +58,7 @@ export const initialNodes: Node[] = [
 		id: 'condition1',
 		type: 'condition',
 		position: { x: 0, y: 400 },
+		draggable: false, // Les nodes condition sont fixes
 		data: {
 			step: '5',
 			label: 'Vérifier réponse Q3',

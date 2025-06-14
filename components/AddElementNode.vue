@@ -172,8 +172,9 @@ const addNode = async (type: string) => {
         savedOutgoingEdge: savedOutgoingEdge  // Ajouter l'edge sortant sauvé
       }
     },
-    // IMPORTANT: Copier explicitement les propriétés du node actuel
-    draggable: currentNode.draggable !== false, // Par défaut true
+    // IMPORTANT: Les nodes condition doivent être non-draggable
+    // Les nodes question et audio doivent être draggable
+    draggable: type === 'condition' ? false : true, // Seuls les nodes condition sont fixes
     selectable: currentNode.selectable !== false, // Par défaut true
     connectable: currentNode.connectable !== false, // Par défaut true
     focusable: currentNode.focusable !== false, // Par défaut true

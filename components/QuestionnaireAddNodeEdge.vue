@@ -320,6 +320,7 @@ async function handleAddCondition() {
     id: conditionNodeId,
     type: 'condition',
     position: { x: baseX, y: baseY },
+    draggable: false, // Les nodes condition sont fixes
     data: {
       step: newStep.toString(),
       label: 'Nouvelle condition',
@@ -330,7 +331,6 @@ async function handleAddCondition() {
         { id: `${conditionNodeId}-branch2`, label: 'Option 2', condition: '' }
       ]
     }
-    // Les propriétés draggable, selectable, connectable sont gérées par VueFlow par défaut
   }
   
   // Créer les nodes add-element pour TOUTES les branches
