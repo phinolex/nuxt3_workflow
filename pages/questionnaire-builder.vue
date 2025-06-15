@@ -1147,6 +1147,15 @@ const handleStartupSelection = async (action: any) => {
 							isGhost: true
 						},
 						draggable: false
+					},
+					{
+						id: `${addElementId}-end`,
+						type: 'end',
+						position: { x: 22, y: 300 }, // Centré par rapport à add-element
+						data: {
+							label: 'Fin du questionnaire',
+							message: 'Merci d\'avoir complété ce questionnaire !'
+						}
 					}
 				]
 				edges.value = [
@@ -1154,6 +1163,12 @@ const handleStartupSelection = async (action: any) => {
 						id: `e-start-${addElementId}`,
 						source: 'start',
 						target: addElementId,
+						type: 'add-node'
+					},
+					{
+						id: `e-${addElementId}-${addElementId}-end`,
+						source: addElementId,
+						target: `${addElementId}-end`,
 						type: 'add-node'
 					}
 				]
@@ -1262,558 +1277,11 @@ const handleNodeDelete = async (nodeId: string) => {
 	
 	// Vérifier si ce node a été créé depuis un node "Ajouter un élément"
 	if (node.data?.createdFromAddElement) {
-		// ACTIVER le mode restauration pour bloquer l'auto-layout
-		isRestoring = true
-		console.log('🚫 MODE RESTAURATION ACTIVÉ - Auto-layout temporairement désactivé')
-		
-		const addElementInfo = node.data.createdFromAddElement
-		console.log('🔄 RESTAURATION - Début de la restauration:', addElementInfo)
-		console.log('📍 RESTAURATION - Position du node à supprimer:', {
-			x: node.position.x,
-			y: node.position.y,
-			fullPosition: node.position
-		})
-		console.log('📍 RESTAURATION - Position originale sauvegardée:', addElementInfo.originalPosition)
-		console.log('📍 RESTAURATION - Position qui sera utilisée:', addElementInfo.originalPosition || node.position)
-		
-		// Sauvegarder les positions actuelles de TOUS les nodes pour les restaurer après
-		const currentPositions = new Map()
-		nodes.value.forEach(n => {
-			currentPositions.set(n.id, { ...n.position })
-		})
-		
-		// IMPORTANT: Sauvegarder l'edge sortant ACTUEL (pas celui sauvé lors du remplacement)
-		let currentOutgoingEdge = null
-		let shouldKeepTarget = false
-		let targetNodeInfo = null
-		
-		if (outgoingEdge) {
-			currentOutgoingEdge = { ...outgoingEdge }
-			const targetNode = findNode(outgoingEdge.target)
-			
-			if (targetNode) {
-				// Sauvegarder les infos du node cible
-				targetNodeInfo = {
-					id: targetNode.id,
-					type: targetNode.type,
-					position: { ...targetNode.position },
-					data: { ...targetNode.data }
-				}
-				
-				// Toujours garder le node cible, qu'il soit "end" ou autre
-				shouldKeepTarget = true
-			}
-			
-			removeEdges([outgoingEdge])
-			
-			// Ne jamais supprimer automatiquement le node cible
-			// Laissons l'utilisateur décider s'il veut garder le node "fin" ou non
-		}
-		
-		// Recréer le node "Ajouter un élément" AVANT de supprimer le node actuel
-		const addElementId = addElementInfo.nodeId || `${nodeId}-add-element`
-		
-		// UTILISER les edges sauvés depuis le remplacement (plus fiable que la recherche actuelle)
-		const savedIncomingEdge = addElementInfo.savedIncomingEdge || (incomingEdge ? { ...incomingEdge } : null)
-		const savedOutgoingEdge = addElementInfo.savedOutgoingEdge || (outgoingEdge ? { ...outgoingEdge } : null)
-		console.log('💾 Edge entrant (depuis sauvegarde du remplacement):', savedIncomingEdge)
-		console.log('💾 Edge sortant (depuis sauvegarde du remplacement):', savedOutgoingEdge)
-		
-		// Supprimer l'ancien edge d'abord
-		if (incomingEdge) {
-			removeEdges([incomingEdge])
-		}
-		
-		// IMPORTANT: Utiliser la position ACTUELLE du node supprimé, pas la position originale
-		// Cela garantit que le node "Créer un élément" reprend exactement la place du node supprimé
-		const restoredPosition = { ...node.position } // Toujours utiliser la position actuelle
-		console.log('✨ RESTAURATION - Position du node supprimé qui sera utilisée:', restoredPosition)
-		console.log('📍 Position originale (ignorée):', addElementInfo.originalPosition)
-		
-		addNodes({
-			id: addElementId,
-			type: 'add-element',
-			position: restoredPosition,
-			data: {
-				conditionBranch: addElementInfo.conditionBranch,
-				branchLabel: addElementInfo.branchLabel,
-				isGhost: true,
-				_restoredFromOriginal: true, // Marquer pour éviter le repositionnement
-				_originalPosition: restoredPosition, // Sauvegarder la position cible
-				_lockedPosition: true // Marquer pour empêcher tout déplacement automatique
-			},
-			draggable: false
-		})
-		
-		console.log('✅ RESTAURATION - Node ajouté avec la position:', restoredPosition)
-		
-		// TRAQUER le repositionnement mystérieux
-		const checkPosition = () => {
-			const currentNode = findNode(addElementId)
-			if (currentNode) {
-				console.log('🕵️ TRACKING - Position actuelle du node:', currentNode.position)
-				if (currentNode.position.x !== restoredPosition.x || currentNode.position.y !== restoredPosition.y) {
-					console.log('⚠️ MYSTÈRE - Le node a bougé de', restoredPosition, 'vers', currentNode.position)
-				}
-			}
-		}
-		
-		// PROTECTION AGRESSIVE: Forcer la position en continu
-		const forcePosition = () => {
-			const currentNode = findNode(addElementId)
-			if (currentNode) {
-				if (currentNode.position.x !== restoredPosition.x || currentNode.position.y !== restoredPosition.y) {
-					console.log('🚨 FORCE CORRECTION - Repositionnement détecté, correction immédiate!')
-					updateNode(addElementId, { position: restoredPosition })
-				}
-			}
-		}
-		
-		// Vérifier et corriger la position toutes les 10ms pendant 500ms
-		for (let i = 1; i <= 50; i++) {
-			setTimeout(() => {
-				checkPosition()
-				forcePosition()
-			}, i * 10)
-		}
-		
-		// Supprimer le node original
-		removeNodes([node])
-		
-		// Utiliser nextTick et un délai pour s'assurer que VueFlow a traité les changements
-		nextTick(() => {
-			setTimeout(async () => {
-				console.log('📌 Creating edge after delay, saved edge:', savedIncomingEdge)
-				
-				if (savedIncomingEdge && addElementInfo.conditionBranch) {
-					// Créer directement le nouvel edge avec les bonnes infos
-					const newEdge = {
-						id: `e-${savedIncomingEdge.source}-${addElementInfo.conditionBranch}-${addElementId}`,
-						source: savedIncomingEdge.source,
-						sourceHandle: addElementInfo.conditionBranch,
-						target: addElementId,
-						type: 'simple-condition',
-						label: addElementInfo.branchLabel || savedIncomingEdge.label,
-						animated: true
-					}
-					console.log('✨ Creating new edge:', newEdge)
-					
-					// Ajouter le nouveau edge
-					addEdges(newEdge)
-				} else if (savedIncomingEdge) {
-					console.log('⚠️ No conditionBranch info, using existing edge')
-					// Fallback si pas d'info de branche
-					addEdges({
-						...savedIncomingEdge,
-						id: savedIncomingEdge.id,
-						target: addElementId,
-						type: savedIncomingEdge.type || 'simple-condition',
-						animated: true
-					})
-				} else {
-					console.log('❌ No incoming edge found!')
-				}
-				
-				// Vérifier si on restaure depuis une branche de condition
-				const isFromConditionBranch = addElementInfo.conditionBranch !== undefined && addElementInfo.conditionBranch !== null
-				console.log('🔍 Restauration depuis branche de condition?', isFromConditionBranch, addElementInfo.conditionBranch)
-				
-				// RESTAURER l'edge sortant - Priorité à l'edge sauvegardé depuis le remplacement
-				// SAUF si on vient d'une branche de condition, dans ce cas on veut toujours un node "fin"
-				if (!isFromConditionBranch && savedOutgoingEdge && savedOutgoingEdge.target) {
-					// Utiliser d'abord l'edge sauvegardé lors du remplacement
-					const targetStillExists = findNode(savedOutgoingEdge.target)
-					
-					if (targetStillExists) {
-						// Utiliser l'edge sortant sauvegardé
-						console.log('✨ Restauration de l\'edge sortant SAUVEGARDÉ vers:', savedOutgoingEdge.target)
-						const restoredOutgoingEdge = {
-							id: `e-${addElementId}-${savedOutgoingEdge.target}`,
-							source: addElementId,
-							target: savedOutgoingEdge.target,
-							type: 'add-node', // IMPORTANT: Toujours utiliser add-node pour avoir le bouton +
-							animated: false
-						}
-						addEdges(restoredOutgoingEdge)
-						console.log('✅ Edge sortant sauvegardé restauré avec bouton +:', restoredOutgoingEdge)
-						
-						// Si c'est un node "fin", s'assurer qu'il est bien positionné
-						if (targetStillExists.type === 'end') {
-							await nextTick()
-							updateNodeInternals([savedOutgoingEdge.target])
-						}
-					} else {
-						console.log('⚠️ Le node cible n\'existe plus, il sera recréé si nécessaire')
-					}
-				} else if (!isFromConditionBranch && currentOutgoingEdge && shouldKeepTarget && targetNodeInfo) {
-					// Fallback: utiliser l'edge actuel si pas d'edge sauvegardé
-					const targetExists = findNode(currentOutgoingEdge.target)
-					if (targetExists) {
-						console.log('✨ Restauration de l\'edge sortant ACTUEL:', currentOutgoingEdge)
-						const restoredOutgoingEdge = {
-							id: `e-${addElementId}-${currentOutgoingEdge.target}`,
-							source: addElementId,
-							target: currentOutgoingEdge.target,
-							type: 'add-node', // IMPORTANT: Toujours utiliser add-node pour avoir le bouton +
-							animated: false
-						}
-						addEdges(restoredOutgoingEdge)
-						console.log('✅ Edge sortant actuel restauré:', restoredOutgoingEdge)
-					} else {
-						console.log('⚠️ Node cible n\'existe plus, création d\'un nouveau node Fin')
-						// Créer un nouveau node Fin
-						const newEndId = `${addElementId}-end`
-						
-						// Attendre que le node AddElement soit complètement initialisé
-						await nextTick()
-						updateNodeInternals([addElementId])
-						await nextTick()
-						
-						// Récupérer le node avec ses dimensions réelles
-						const addElementNode = findNode(addElementId)
-						let nodeWidth = 240 // Largeur par défaut du AddElementNode
-						if (addElementNode?.dimensions?.width) {
-							nodeWidth = addElementNode.dimensions.width
-						}
-						
-						// Utiliser les mêmes largeurs que dans les data initiales
-						const endNodeWidth = 200
-						
-						// Calculer la position exacte pour centrer le node End
-						const centerX = restoredPosition.x + (nodeWidth / 2) - (endNodeWidth / 2)
-						
-						console.log('📍 Calcul position node Fin:', {
-							addElementX: restoredPosition.x,
-							nodeWidth: nodeWidth,
-							endNodeWidth: endNodeWidth,
-							centerX: centerX
-						})
-						
-						addNodes({
-							id: newEndId,
-							type: 'end',
-							position: {
-								x: centerX,
-								y: restoredPosition.y + 150
-							},
-							data: {
-								label: 'Fin du questionnaire',
-								message: 'Merci d\'avoir complété ce questionnaire !'
-							}
-						})
-						
-						// Attendre et mettre à jour les internals du node Fin
-						await nextTick()
-						updateNodeInternals([newEndId])
-						
-						// Créer l'edge vers le nouveau node Fin
-						addEdges({
-							id: `e-${addElementId}-${newEndId}`,
-							source: addElementId,
-							target: newEndId,
-							type: 'add-node',
-							animated: false
-						})
-					}
-				} else {
-					console.log('ℹ️ Création d\'un nouveau node Fin', isFromConditionBranch ? '(depuis branche de condition)' : '(pas d\'edge sortant)')
-					// Toujours créer un node Fin pour un node "Créer un élément" qui vient d'une branche de condition
-					// OU quand il n'y a pas d'edge sortant
-					const newEndId = `${addElementId}-end`
-					// Attendre que le node AddElement soit complètement initialisé
-					await nextTick()
-					updateNodeInternals([addElementId])
-					await nextTick()
-					
-					// Récupérer le node avec ses dimensions réelles
-					const addElementNode = findNode(addElementId)
-					let nodeWidth = 240 // Largeur par défaut du AddElementNode
-					if (addElementNode?.dimensions?.width) {
-						nodeWidth = addElementNode.dimensions.width
-					}
-					
-					// Utiliser les mêmes largeurs que dans les data initiales
-					const endNodeWidth = 200
-					
-					// Calculer la position exacte pour centrer le node End
-					const centerX = restoredPosition.x + (nodeWidth / 2) - (endNodeWidth / 2)
-					
-					console.log('📍 Calcul position node Fin (cas 2):', {
-						addElementX: restoredPosition.x,
-						nodeWidth: nodeWidth,
-						endNodeWidth: endNodeWidth,
-						centerX: centerX
-					})
-					
-					addNodes({
-						id: newEndId,
-						type: 'end',
-						position: {
-							x: centerX,
-							y: restoredPosition.y + 150
-						},
-						data: {
-							label: 'Fin du questionnaire',
-							message: 'Merci d\'avoir complété ce questionnaire !'
-						}
-					})
-					
-					// Attendre et mettre à jour les internals du node Fin
-					await nextTick()
-					updateNodeInternals([newEndId])
-					
-					// Créer l'edge vers le nouveau node Fin
-					addEdges({
-						id: `e-${addElementId}-${newEndId}`,
-						source: addElementId,
-						target: newEndId,
-						type: 'add-node',
-						animated: false
-					})
-				}
-				
-				// Mettre à jour les internals pour s'assurer que les handles sont connectés
-				const nodesToUpdate = [addElementId]
-				
-				// Ajouter le node source (condition) si il existe
-				if (savedIncomingEdge && savedIncomingEdge.source) {
-					nodesToUpdate.push(savedIncomingEdge.source)
-				}
-				
-				// Ajouter TOUS les nodes connectés pour forcer la mise à jour des edges
-				if (savedOutgoingEdge && savedOutgoingEdge.target) {
-					nodesToUpdate.push(savedOutgoingEdge.target)
-				} else if (currentOutgoingEdge && shouldKeepTarget) {
-					nodesToUpdate.push(currentOutgoingEdge.target)
-				}
-				
-				// Si on a créé un nouveau node Fin, mettre à jour ses internals aussi
-				const newEndNode = nodes.value.find(n => n.id === `${addElementId}-end`)
-				if (newEndNode) {
-					nodesToUpdate.push(newEndNode.id)
-				}
-				
-				// Mettre à jour tous les internals
-				updateNodeInternals(nodesToUpdate)
-				
-				// Forcer un rafraîchissement des edges après un court délai
-				await nextTick()
-				setTimeout(() => {
-					// Re-mettre à jour les internals pour forcer le redessin des edges
-					const allNodesToUpdate = [...new Set(nodesToUpdate)]
-					updateNodeInternals(allNodesToUpdate)
-					// Trigger un rafraîchissement des edges
-					triggerRef(edges)
-					
-					// Forcer une mise à jour supplémentaire après un autre délai
-					setTimeout(() => {
-						console.log('🔄 Mise à jour finale des connexions pour le node restauré')
-						updateNodeInternals(allNodesToUpdate)
-						forceUpdateAllConnections()
-					}, 100)
-				}, 50)
-				
-				// NE PAS relancer le layout pendant la restauration
-				console.log('⏸️ Layout automatique suspendu pendant la restauration')
-				
-				// Utiliser la position actuelle du node, pas la position originale
-				const targetPosition = { ...restoredPosition }
-				
-				// Restaurer les positions de tous les nodes
-				currentPositions.forEach((position, nodeId) => {
-					if (nodeId !== node.id && findNode(nodeId)) {
-						updateNode(nodeId, { position })
-					}
-				})
-				
-				// S'assurer que le node "Ajouter un élément" est à la bonne position
-				updateNode(addElementId, { position: targetPosition })
-				
-				// Attendre un peu pour que les nodes soient bien positionnés
-				setTimeout(async () => {
-					// NE PAS aligner si c'est une branche de condition - garder les positions existantes
-					// On vérifie si le node a été créé depuis une branche de condition
-					const isFromConditionBranch = addElementInfo.conditionBranch && savedIncomingEdge?.sourceHandle
-					
-					if (!isFromConditionBranch) {
-						// Aligner seulement si ce n'est PAS une branche de condition
-						await alignNodesWithAddElement(addElementId)
-					} else {
-						console.log('⚠️ Branche de condition détectée - Préservation des positions existantes')
-						// Pour une branche de condition, on garde les positions telles quelles
-						// et on verrouille temporairement TOUS les nodes des autres branches
-						
-						// Trouver le node condition source
-						const conditionNode = findNode(savedIncomingEdge.source)
-						if (conditionNode && conditionNode.type === 'condition') {
-							// Trouver tous les nodes des autres branches
-							const otherBranchNodes = new Set<string>()
-							
-							// Parcourir toutes les branches de la condition
-							edges.value
-								.filter(e => e.source === conditionNode.id && e.sourceHandle && e.sourceHandle !== addElementInfo.conditionBranch)
-								.forEach(branchEdge => {
-									// Ajouter le node direct et tous ses descendants
-									otherBranchNodes.add(branchEdge.target)
-									const downstream = getDownstreamNodes(branchEdge.target)
-									downstream.forEach(id => otherBranchNodes.add(id))
-								})
-							
-							// Verrouiller temporairement les positions de ces nodes
-							otherBranchNodes.forEach(nodeId => {
-								const node = findNode(nodeId)
-								if (node) {
-									updateNode(nodeId, {
-										data: {
-											...node.data,
-											_temporaryLock: true
-										}
-									})
-								}
-							})
-							
-							console.log(`🔒 ${otherBranchNodes.size} nodes des autres branches verrouillés temporairement`)
-						}
-					}
-					
-					// Forcer une mise à jour immédiate des edges après l'alignement
-					const connectedNodes = [addElementId]
-					if (currentOutgoingEdge && shouldKeepTarget) {
-						connectedNodes.push(currentOutgoingEdge.target)
-					}
-					updateNodeInternals(connectedNodes)
-					await nextTick()
-					
-					// Forcer le rafraîchissement des edges
-					edges.value = [...edges.value]
-					triggerRef(edges)
-					
-					// Ajuster les positions verticales IMMÉDIATEMENT
-					const targetNodeId = currentOutgoingEdge?.target || null
-					if (targetNodeId) {
-						console.log('🎯 Ajustement immédiat du node cible:', targetNodeId)
-						await adjustVerticalPositionsAfterDeletion(node.position, addElementId, targetNodeId)
-					}
-					
-					// DÉSACTIVER le mode restauration après 500ms
-					setTimeout(async () => {
-						isRestoring = false
-						console.log('✅ MODE RESTAURATION DÉSACTIVÉ - Auto-layout réactivé')
-						
-						// Retirer le flag de position verrouillée maintenant que la restauration est terminée
-						const addElementNode = findNode(addElementId)
-						if (addElementNode && addElementNode.data._lockedPosition) {
-							updateNode(addElementId, { 
-								data: { 
-									...addElementNode.data, 
-									_lockedPosition: false,
-									_restoredFromOriginal: false 
-								} 
-							})
-							console.log('🔓 Position déverrouillée pour le node:', addElementId)
-						}
-						
-						// Retirer les verrous temporaires de tous les nodes
-						nodes.value.forEach(node => {
-							if (node.data?._temporaryLock) {
-								updateNode(node.id, {
-									data: {
-										...node.data,
-										_temporaryLock: false
-									}
-								})
-							}
-						})
-						console.log('🔓 Tous les verrous temporaires retirés')
-						
-						// Forcer la mise à jour de toutes les connexions pour garantir l'alignement
-						await forceUpdateAllConnections()
-						console.log('🔄 Mise à jour forcée de toutes les connexions')
-						
-						// Vérifier spécifiquement que le node "Ajouter un élément" a bien une connexion
-						const addElementOutgoingEdge = edges.value.find(e => e.source === addElementId)
-						if (!addElementOutgoingEdge) {
-							console.log('⚠️ Le node "Ajouter un élément" n\'a pas de connexion sortante')
-							
-							// Chercher un node "fin" existant en dessous
-							const endNodes = nodes.value.filter(n => 
-								n.type === 'end' && 
-								n.position.y > restoredPosition.y &&
-								n.position.y < restoredPosition.y + 300
-							)
-							
-							if (endNodes.length > 0) {
-								// Connecter au node "fin" le plus proche
-								const closestEnd = endNodes.reduce((closest, current) => {
-									const closestDist = Math.abs(closest.position.y - restoredPosition.y)
-									const currentDist = Math.abs(current.position.y - restoredPosition.y)
-									return currentDist < closestDist ? current : closest
-								})
-								
-								console.log('🔗 Connexion au node "fin" existant:', closestEnd.id)
-								addEdges({
-									id: `e-${addElementId}-${closestEnd.id}`,
-									source: addElementId,
-									target: closestEnd.id,
-									type: 'add-node',
-									animated: false
-								})
-								
-								await nextTick()
-								updateNodeInternals([addElementId, closestEnd.id])
-							} else {
-								// Créer un nouveau node "fin"
-								console.log('📍 Création d\'un nouveau node "fin"')
-								const newEndId = `${addElementId}-end`
-								const addElementNode = findNode(addElementId)
-								const nodeWidth = addElementNode?.dimensions?.width || 240
-								const endNodeWidth = 200
-								const centerX = restoredPosition.x + (nodeWidth / 2) - (endNodeWidth / 2)
-								
-								addNodes({
-									id: newEndId,
-									type: 'end',
-									position: {
-										x: centerX,
-										y: restoredPosition.y + 150
-									},
-									data: {
-										label: 'Fin du questionnaire',
-										message: 'Merci d\'avoir complété ce questionnaire !'
-									}
-								})
-								
-								await nextTick()
-								updateNodeInternals([newEndId])
-								
-								addEdges({
-									id: `e-${addElementId}-${newEndId}`,
-									source: addElementId,
-									target: newEndId,
-									type: 'add-node',
-									animated: false
-								})
-							}
-						}
-						
-						// Si pas de node cible spécifique, chercher les nodes en dessous
-						if (!targetNodeId) {
-							await adjustVerticalPositionsAfterDeletion(node.position, addElementId, null)
-						}
-						
-						// Déclencher un layout après un court délai pour finaliser
-						setTimeout(() => {
-							if (!isRestoring) {
-								layoutGraph()
-							}
-						}, 100)
-					}, 500)
-				}, 200)
-			}, 100) // Délai de 100ms pour laisser VueFlow traiter les changements
-		})
-		
-		return // Important: sortir ici pour ne pas exécuter le reste
+		// Utiliser la nouvelle fonction de gestion
+		await handleAddElementNodeDeletion(node, incomingEdge, outgoingEdge)
+		return
 	}
+	
 	// Vérifier si ce node est connecté à une condition via sourceHandle
 	else if (incomingEdge && incomingEdge.sourceHandle) {
 		const sourceNode = findNode(incomingEdge.source)
@@ -2320,6 +1788,18 @@ const handleConditionConfirm = async (data: any) => {
 				isReplaced: isReplacedNode,
 				nodeType: actualTargetNode?.type
 			})
+			
+			// Si c'est un node add-element, mettre à jour ses données pour inclure les infos de branche
+			if (actualTargetNode && actualTargetNode.type === 'add-element') {
+				console.log('📝 Mise à jour des données du node add-element pour inclure les infos de branche')
+				updateNode(actualTargetId, {
+					data: {
+						...actualTargetNode.data,
+						conditionBranch: branch.id,
+						branchLabel: branch.label
+					}
+				})
+			}
 			
 			newEdges.push({
 				id: `e-${nodeId}-${branch.id}-${actualTargetId}`,
@@ -2914,6 +2394,228 @@ function calculateBranchWidth(nodeId: string): number {
 	return maxX - minX
 }
 
+// Fonction pour gérer la suppression d'un node créé depuis AddElement
+async function handleAddElementNodeDeletion(node: any, incomingEdge: any, outgoingEdge: any) {
+	console.log('🔧 Gestion de la suppression d\'un node créé depuis AddElement')
+	
+	// Activer le mode restauration
+	isRestoring = true
+	
+	try {
+		const addElementInfo = node.data.createdFromAddElement
+		const nodeId = node.id
+		const addElementId = addElementInfo.nodeId || `${nodeId}-add-element`
+		const position = { ...node.position }
+		
+		// Sauvegarder les infos nécessaires AVANT toute suppression
+		const savedIncomingEdge = addElementInfo.savedIncomingEdge || (incomingEdge ? { ...incomingEdge } : null)
+		const savedOutgoingEdge = addElementInfo.savedOutgoingEdge || (outgoingEdge ? { ...outgoingEdge } : null)
+		
+		// Identifier si on est dans une branche de condition
+		const isInConditionBranch = addElementInfo.conditionBranch !== undefined && addElementInfo.conditionBranch !== null
+		
+		// Sauvegarder l'état actuel de toutes les branches si nécessaire
+		let branchPositions = new Map()
+		if (isInConditionBranch && savedIncomingEdge) {
+			const conditionNode = findNode(savedIncomingEdge.source)
+			if (conditionNode && conditionNode.type === 'condition') {
+				// Sauvegarder toutes les positions actuelles
+				edges.value
+					.filter(e => e.source === conditionNode.id && e.sourceHandle)
+					.forEach(e => {
+						const branchNodes = [e.target, ...getDownstreamNodes(e.target)]
+						branchNodes.forEach(id => {
+							const n = findNode(id)
+							if (n) branchPositions.set(id, { ...n.position })
+						})
+					})
+			}
+		}
+		
+		// ÉTAPE 1: Supprimer d'abord tous les edges
+		const edgesToRemove = []
+		if (incomingEdge) edgesToRemove.push(incomingEdge)
+		if (outgoingEdge) edgesToRemove.push(outgoingEdge)
+		
+		if (edgesToRemove.length > 0) {
+			console.log('🗑️ Suppression des edges:', edgesToRemove.map(e => e.id))
+			removeEdges(edgesToRemove)
+			await nextTick()
+		}
+		
+		// ÉTAPE 2: Supprimer le node
+		console.log('🗑️ Suppression du node:', nodeId)
+		removeNodes([node])
+		await nextTick()
+		
+		// ÉTAPE 3: Créer le nouveau node add-element
+		console.log('➕ Création du node add-element:', addElementId)
+		addNodes({
+			id: addElementId,
+			type: 'add-element',
+			position: position,
+			data: {
+				conditionBranch: addElementInfo.conditionBranch,
+				branchLabel: addElementInfo.branchLabel,
+				isGhost: true,
+				_restoredFromOriginal: true,
+				_lockedPosition: true
+			},
+			draggable: false
+		})
+		await nextTick()
+		
+		// ÉTAPE 4: Recréer l'edge entrant
+		if (savedIncomingEdge) {
+			const newIncomingEdge = {
+				id: savedIncomingEdge.id || `e-${savedIncomingEdge.source}-${addElementId}`,
+				source: savedIncomingEdge.source,
+				sourceHandle: savedIncomingEdge.sourceHandle || addElementInfo.conditionBranch,
+				target: addElementId,
+				type: savedIncomingEdge.type || 'simple-condition',
+				label: savedIncomingEdge.label || addElementInfo.branchLabel,
+				animated: true
+			}
+			console.log('🔗 Création edge entrant:', newIncomingEdge)
+			addEdges(newIncomingEdge)
+		}
+		
+		// ÉTAPE 5: Gérer l'edge sortant ou créer un node end
+		if (savedOutgoingEdge && findNode(savedOutgoingEdge.target)) {
+			// Reconnecter à la cible existante
+			const newOutgoingEdge = {
+				id: `e-${addElementId}-${savedOutgoingEdge.target}`,
+				source: addElementId,
+				target: savedOutgoingEdge.target,
+				type: 'add-node',
+				animated: false
+			}
+			console.log('🔗 Création edge sortant:', newOutgoingEdge)
+			addEdges(newOutgoingEdge)
+		} else if (isInConditionBranch || !savedOutgoingEdge) {
+			// Créer un nouveau node end
+			const endId = `${addElementId}-end`
+			const endNode = {
+				id: endId,
+				type: 'end',
+				position: {
+					x: position.x + 22, // Centré par rapport à add-element (240-200)/2
+					y: position.y + 150
+				},
+				data: {
+					label: 'Fin du questionnaire',
+					message: 'Merci d\'avoir complété ce questionnaire !'
+				}
+			}
+			console.log('➕ Création node end:', endNode)
+			addNodes(endNode)
+			
+			// Connecter au node end
+			addEdges({
+				id: `e-${addElementId}-${endId}`,
+				source: addElementId,
+				target: endId,
+				type: 'add-node',
+				animated: false
+			})
+		}
+		
+		await nextTick()
+		
+		// ÉTAPE 6: Restaurer les positions des autres branches si nécessaire
+		if (isInConditionBranch && branchPositions.size > 0) {
+			console.log('📍 Restauration des positions des branches')
+			branchPositions.forEach((pos, nodeId) => {
+				if (nodeId !== addElementId && findNode(nodeId)) {
+					updateNode(nodeId, { position: pos })
+				}
+			})
+		}
+		
+		// ÉTAPE 7: Mettre à jour tous les internals
+		const nodesToUpdate = [addElementId]
+		if (savedIncomingEdge) nodesToUpdate.push(savedIncomingEdge.source)
+		if (savedOutgoingEdge && findNode(savedOutgoingEdge.target)) nodesToUpdate.push(savedOutgoingEdge.target)
+		
+		updateNodeInternals(nodesToUpdate)
+		
+		// ÉTAPE 8: Forcer un réajustement après un court délai
+		setTimeout(() => {
+			if (isInConditionBranch) {
+				adjustConditionBranchSpacing()
+			}
+			forceUpdateAllConnections()
+		}, 100)
+		
+	} finally {
+		// Désactiver le mode restauration après un délai
+		setTimeout(() => {
+			isRestoring = false
+			console.log('✅ Mode restauration désactivé')
+		}, 500)
+	}
+}
+
+// Fonction pour gérer la suppression d'un node dans une branche de condition
+async function handleConditionBranchNodeDeletion(deletedNode: any, addElementId: string, branchesToRestore: any[]) {
+	console.log('🔧 Gestion spéciale de la suppression dans une branche de condition')
+	
+	// Bloquer temporairement l'auto-layout
+	isRestoring = true
+	
+	try {
+		// 1. Restaurer immédiatement les positions des autres branches
+		if (branchesToRestore.length > 0) {
+			console.log('📍 Restauration des positions originales des branches')
+			
+			for (const branch of branchesToRestore) {
+				// Ne pas toucher à la branche où on a supprimé le node
+				if (branch.targetId === deletedNode.id || branch.targetId === addElementId) continue
+				
+				const targetNode = findNode(branch.targetId)
+				if (targetNode) {
+					// Restaurer la position originale
+					updateNode(branch.targetId, {
+						position: branch.targetPosition
+					})
+					
+					// Restaurer les positions des nodes downstream
+					for (const downstream of branch.downstreamNodes) {
+						const node = findNode(downstream.id)
+						if (node) {
+							updateNode(downstream.id, {
+								position: downstream.position
+							})
+						}
+					}
+				}
+			}
+		}
+		
+		// 2. Attendre que les positions soient mises à jour
+		await nextTick()
+		
+		// 3. Mettre à jour toutes les connexions
+		const allBranchNodes = branchesToRestore.flatMap(b => [b.targetId, ...b.downstreamNodes.map(d => d.id)])
+		updateNodeInternals([...new Set([addElementId, ...allBranchNodes])])
+		
+		// 4. Forcer le recalcul des edges
+		await nextTick()
+		edges.value = [...edges.value]
+		
+		// 5. Réappliquer l'alignement des branches après un court délai
+		setTimeout(() => {
+			adjustConditionBranchSpacing()
+		}, 100)
+		
+	} finally {
+		// Débloquer l'auto-layout après un délai
+		setTimeout(() => {
+			isRestoring = false
+		}, 500)
+	}
+}
+
 // Fonction pour déplacer tous les nodes en aval d'un node donné
 function moveDownstreamNodes(nodeId: string, deltaX: number, deltaY: number, nodesList: Node[] = nodes.value) {
 	// Récupérer tous les nodes en aval
@@ -2951,6 +2653,12 @@ function adjustConditionBranchSpacing() {
 	// Ne pas ajuster si on est en train de faire un drag manuel
 	if (isManualDragging || isDragging.value) {
 		console.log('🚫 Ajustement des branches ignoré - drag manuel en cours')
+		return
+	}
+	
+	// Ne pas ajuster si on est en mode restauration
+	if (isRestoring) {
+		console.log('🚫 Ajustement des branches ignoré - restauration en cours')
 		return
 	}
 	
@@ -3454,7 +3162,7 @@ onNodeDrag((params) => {
 				Math.pow(nodeCenterY - addElementCenterY, 2)
 			)
 			
-			return distance < 150 // Zone de détection
+			return distance < 200 // Zone de détection augmentée pour faciliter le drop
 		})
 		
 		if (hoveredAddElement) {
@@ -3565,6 +3273,8 @@ onNodeDragStop(async (params) => {
 		const targetAddElement = nodes.value.find(n => n.id === hoveredAddElementId.value)
 		if (targetAddElement && node.type !== 'condition') {
 			console.log('🎯 Drop du node sur add-element:', targetAddElement.id)
+			console.log('📦 Node info:', { id: node.id, type: node.type, hasCreatedFromAddElement: !!node.data?.createdFromAddElement })
+			console.log('📦 AddElement info:', { id: targetAddElement.id, data: targetAddElement.data })
 			
 			// IMPORTANT: Vérifier d'abord si le node a été créé depuis un "Ajouter un élément"
 			// Si oui, on doit le restaurer à sa position originale
@@ -3770,6 +3480,10 @@ onNodeDragStop(async (params) => {
 			if (outgoingEdge) nodesToUpdate.push(outgoingEdge.target)
 			updateNodeInternals(nodesToUpdate)
 			
+			// S'assurer que le node est bien positionné
+			await nextTick()
+			updateNode(node.id, { position: { ...targetAddElement.position } })
+			
 			// Forcer la mise à jour des connexions
 			setTimeout(async () => {
 				await forceUpdateAllConnections()
@@ -3788,9 +3502,21 @@ onNodeDragStop(async (params) => {
 	// Si pas de drop sur un bouton + ou add-element
 	const originalPos = originalPositions.get(node.id)
 	
-	// Vérifier si le node a été créé depuis un "Ajouter un élément"
-	if (node.data?.createdFromAddElement) {
-		console.log('🔄 Node créé depuis AddElement déplacé, restauration du AddElement')
+	// Vérifier si le node a réellement bougé
+	// DÉSACTIVÉ : La restauration du AddElement ne doit se faire que lors de la suppression
+	const hasMoved = false // originalPos && (Math.abs(node.position.x - originalPos.x) > 25 || Math.abs(node.position.y - originalPos.y) > 25)
+	
+	console.log('🔍 Vérification du mouvement:', {
+		originalPos,
+		currentPos: node.position,
+		hasMoved,
+		deltaX: originalPos ? Math.abs(node.position.x - originalPos.x) : 0,
+		deltaY: originalPos ? Math.abs(node.position.y - originalPos.y) : 0
+	})
+	
+	// Vérifier si le node a été créé depuis un "Ajouter un élément" ET qu'il a bougé
+	if (node.data?.createdFromAddElement && hasMoved) {
+		console.log('🔄 Node créé depuis AddElement a bougé, restauration du AddElement')
 		
 		// Extraire les informations de restauration
 		const addElementInfo = node.data.createdFromAddElement
@@ -3964,6 +3690,8 @@ onNodeDragStop(async (params) => {
 				await forceUpdateAllConnections()
 			}, 50)
 		})
+	} else if (node.data?.createdFromAddElement && !hasMoved) {
+		console.log('📍 Node créé depuis AddElement n\'a pas bougé, pas de restauration nécessaire')
 	}
 	
 	// Nettoyer la position stockée
@@ -4338,72 +4066,50 @@ const handleDropOnButton = async (nodeType: string, edge: Edge) => {
 
 // Gérer le drop d'un type de node sur un add-element
 const handleDropOnAddElement = async (nodeType: string, addElementNode: Node) => {
-	const newNodeId = `${nodeType}-${Date.now()}`
+	console.log('🎯 Drop sur add-element node:', { nodeType, addElementNode })
 	
-	// Créer le nouveau node selon le type
-	const newNode = createNodeByType(nodeType, newNodeId, 1, addElementNode.position)
-	
-	// Sauvegarder les informations importantes du add-element AVANT de le remplacer
-	const addElementInfo = {
-		nodeId: addElementNode.id,
-		originalPosition: { ...addElementNode.position },
-		conditionBranch: addElementNode.data?.conditionBranch,
-		branchLabel: addElementNode.data?.branchLabel,
-		savedIncomingEdge: null,
-		savedOutgoingEdge: null
-	}
-	
-	// Sauvegarder les edges
-	const incomingEdge = edges.value.find(e => e.target === addElementNode.id)
-	const outgoingEdge = edges.value.find(e => e.source === addElementNode.id)
-	
-	if (incomingEdge) {
-		addElementInfo.savedIncomingEdge = { ...incomingEdge }
-	}
-	if (outgoingEdge) {
-		addElementInfo.savedOutgoingEdge = { ...outgoingEdge }
-	}
-	
-	// Marquer le nouveau node avec les infos de remplacement
-	newNode.data = {
-		...newNode.data,
-		createdFromAddElement: addElementInfo
-	}
-	
-	// Remplacer le add-element par le nouveau node
-	addNodes([newNode])
-	removeNodes([addElementNode.id])
-	
-	// Reconnecter les edges
-	if (incomingEdge) {
-		removeEdges([incomingEdge.id])
-		addEdges({
-			...incomingEdge,
-			target: newNodeId,
-			animated: false
-		})
-	}
-	
-	if (outgoingEdge) {
-		removeEdges([outgoingEdge.id])
-		addEdges({
-			...outgoingEdge,
-			source: newNodeId
-		})
-	}
-	
-	// Mettre à jour les internals
+	// Trouver l'instance du composant AddElementNode
+	// Le plus simple est de simuler le clic sur le bouton correspondant
+	// en cherchant le bouton dans le DOM et en déclenchant un clic
 	await nextTick()
-	updateNodeInternals([newNodeId])
 	
-	// Émettre l'événement de remplacement
-	setTimeout(() => {
-		handleAddElementReplaced({
-			oldNodeId: addElementNode.id,
-			newNodeId,
-			isDragDrop: true
-		})
-	}, 100)
+	// Chercher le node dans le DOM
+	const nodeElement = document.querySelector(`[data-id="${addElementNode.id}"]`)
+	if (!nodeElement) {
+		console.error('❌ Node element not found in DOM')
+		return
+	}
+	
+	// Mapper le type de node au sélecteur du bouton
+	let buttonSelector = ''
+	switch (nodeType) {
+		case 'question':
+			buttonSelector = '.element-option:nth-child(1)' // Premier bouton
+			break
+		case 'audio':
+			buttonSelector = '.element-option:nth-child(2)' // Deuxième bouton
+			break
+		case 'end':
+			buttonSelector = '.element-option:nth-child(3)' // Troisième bouton
+			break
+		case 'condition':
+			// Les nodes condition ne peuvent pas être ajoutés via drag & drop sur un add-element
+			console.warn('⚠️ Les nodes condition ne peuvent pas être ajoutés via drag & drop')
+			message.warning('Les nodes condition ne peuvent pas être ajoutés de cette manière. Utilisez la palette directement.')
+			return
+		default:
+			console.error('❌ Type de node non reconnu:', nodeType)
+			return
+	}
+	
+	// Trouver et cliquer sur le bouton
+	const button = nodeElement.querySelector(buttonSelector) as HTMLButtonElement
+	if (button) {
+		console.log('✅ Simulation du clic sur le bouton:', nodeType)
+		button.click()
+	} else {
+		console.error('❌ Bouton non trouvé pour le type:', nodeType)
+	}
 }
 
 // Fonction utilitaire pour créer un node selon son type
