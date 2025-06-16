@@ -7,8 +7,13 @@ const props = defineProps(['id', 'data', 'selected', 'type', 'sourcePosition', '
 <template>
   <div class="end-node">
     <Handle type="source" :position="Position.Top" />
-    <div class="text">
-      <div><span class="name">{{ props.data.name || 'End' }}</span></div>
+    <div class="content">
+      <div class="icon">
+        <naive-icon name="material-symbols:flag-2-rounded" color="transparent" iconColor="#0d0d0d"/>
+      </div>
+      <div class="text">
+        <div class="label">Fin</div>
+      </div>
     </div>
   </div>
 </template>
@@ -17,31 +22,46 @@ const props = defineProps(['id', 'data', 'selected', 'type', 'sourcePosition', '
 .end-node {
   height: 100%;
   width: 100%;
-  padding: 0.2rem;
-  display: flex;
-  flex-direction: row;
-  align-items: stretch;
-  align-content: stretch;
-  gap: 10px;
-  background: white;
-  border: 1px solid #cdcdcd;
-  border-radius: 4px;
-  box-shadow: 0 0 22px #00000044;
-  text-transform: none;
-  font-size: 0.5em;
-  font-weight: normal;
-  /* text-align: center; */
+  padding: 16px;
+  background: #fafafa;
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
   position: relative;
-}
-.end-node .text {
-  flex: 1;
-}
-.end-node .name {
-  color: #555555;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
-.end-node .node-name {
-  color: #888888;
+.end-node:hover {
+  border-color: #d0d0d0;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+}
+
+.content {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  justify-content: center;
+}
+
+.icon {
+  font-size: 20px;
+  color: #6b7280;
+  opacity: 0.8;
+  display: flex;
+}
+
+.text {
+  flex: 1;
+}
+
+.label {
+  font-size: 14px;
+  font-weight: 500;
+  color: #4b5563;
 }
 
 .end-node .vue-flow__handle {
