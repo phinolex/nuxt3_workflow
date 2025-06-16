@@ -1214,11 +1214,17 @@ const handleStartupSelection = async (action: any) => {
 
 const edges = shallowRef<Edge[]>([])  // Initialiser vide pour lazy loading
 const isDragging = ref(false)
+const isReplacingNode = ref(false)  // Flag pour suspendre la suppression des nodes orphelins pendant le remplacement
 
 // Créer une fonction debouncée pour gérer les nodes orphelins
 const handleOrphanedNodes = debounce(() => {
 	if (isDragging.value) {
 		console.log('⏸️ Gestion des nodes orphelins suspendue pendant le drag')
+		return
+	}
+	
+	if (isReplacingNode.value) {
+		console.log('⏸️ Gestion des nodes orphelins suspendue pendant le remplacement de node')
 		return
 	}
 	
@@ -1460,9 +1466,48 @@ const handleNodeDelete = async (nodeId: string) => {
 	}, 200)
 }
 
-// Gestionnaire pour le remplacement du node "Ajouter un élément"
+// Gestionnaire pour le remplacement du node "Ajouter un élément" (CORRIGÉ)
 const handleAddElementReplaced = async (event: any) => {
 	console.log('Node replaced event:', event)
+	
+	// Réinitialiser le flag de remplacement avec un délai pour s'assurer que tout est terminé
+	setTimeout(() => {
+		isReplacingNode.value = false
+		console.log('🔓 Réactivation de la suppression des nodes orphelins')
+		// Forcer une vérification des nodes orphelins après le remplacement
+		handleOrphanedNodes()
+	}, 1000)  // Délai de 1 seconde pour s'assurer que tout est bien en place
+	
+	// IMPORTANT: Sauvegarder les informations de l'AddElement AVANT qu'il soit supprimé
+	const addElementNode = findNode(event.addElementId)
+	let savedIncomingEdge = null
+	let savedOutgoingEdge = null
+	
+	if (addElementNode) {
+		// Sauvegarder l'edge entrant
+		const incomingEdge = edges.value.find(e => e.target === event.addElementId)
+		if (incomingEdge) {
+			savedIncomingEdge = {
+				source: incomingEdge.source,
+				sourceHandle: incomingEdge.sourceHandle,
+				type: incomingEdge.type,
+				label: incomingEdge.label
+			}
+		}
+		
+		// CORRECTION PRINCIPALE: Sauvegarder l'edge sortant
+		const outgoingEdge = edges.value.find(e => e.source === event.addElementId)
+		if (outgoingEdge) {
+			savedOutgoingEdge = {
+				target: outgoingEdge.target,
+				type: outgoingEdge.type,
+				animated: outgoingEdge.animated
+			}
+			console.log('💾 Edge sortant sauvegardé:', savedOutgoingEdge)
+		} else {
+			console.log('⚠️ Aucun edge sortant trouvé pour l\'AddElement')
+		}
+	}
 	
 	// Retirer l'animation de l'edge
 	const edge = edges.value.find(e => e.target === event.newNodeId)
@@ -1477,6 +1522,25 @@ const handleAddElementReplaced = async (event: any) => {
 	const verifiedNode = nodes.value.find(n => n.id === event.newNodeId)
 	if (verifiedNode) {
 		console.log('New node found:', verifiedNode)
+		
+		// CORRECTION: Ajouter les métadonnées createdFromAddElement avec les edges sauvegardés
+		if (addElementNode) {
+			const updatedNodeData = {
+				...verifiedNode.data,
+				createdFromAddElement: {
+					nodeId: event.addElementId,
+					conditionBranch: addElementNode.data?.conditionBranch,
+					branchLabel: addElementNode.data?.branchLabel,
+					originalPosition: { ...addElementNode.position },
+					savedIncomingEdge: savedIncomingEdge,
+					savedOutgoingEdge: savedOutgoingEdge // IMPORTANT: Inclure l'edge sortant
+				}
+			}
+			
+			updateNode(event.newNodeId, { data: updatedNodeData })
+			console.log('✅ Métadonnées createdFromAddElement mises à jour avec edges sauvegardés')
+		}
+		
 		// Mettre à jour les internals pour s'assurer que les handles sont bien configurés
 		updateNodeInternals([event.newNodeId])
 	} else {
@@ -1512,6 +1576,7 @@ const handleAddElementReplaced = async (event: any) => {
 	}, 300)
 	timeouts.add(timeoutId)
 }
+
 
 // Gestionnaires pour les modals
 const handleQuestionConfirm = (data: any) => {
@@ -2526,7 +2591,7 @@ function calculateBranchWidth(nodeId: string): number {
 	return maxX - minX
 }
 
-// NOUVELLE FONCTION : Gestion spéciale du mouvement entre branches
+// NOUVELLE FONCTION : Gestion spéciale du mouvement entre branches (CORRIGÉE)
 async function handleMoveBetweenBranches(node, targetAddElement, savedPositions) {
 	console.log('🔧 Traitement spécial - Mouvement entre branches')
 	
@@ -2536,7 +2601,6 @@ async function handleMoveBetweenBranches(node, targetAddElement, savedPositions)
 	// IMPORTANT: S'assurer qu'on a les infos pour restaurer l'add-element
 	if (!addElementInfo) {
 		console.error('⚠️ ERREUR: Pas d\'info createdFromAddElement sur le node déplacé!')
-		// On ne devrait jamais arriver ici si le node vient d'un add-element
 		return
 	}
 	
@@ -2549,6 +2613,19 @@ async function handleMoveBetweenBranches(node, targetAddElement, savedPositions)
 	// Sauvegarder les connexions actuelles du node déplacé
 	const nodeIncomingEdges = edges.value.filter(e => e.target === node.id)
 	const nodeOutgoingEdges = edges.value.filter(e => e.source === node.id)
+	
+	// NOUVEAU: Détecter si l'add-element cible est connecté à un node existant
+	const isTargetConnectedToExistingNode = outgoingEdge && 
+		outgoingEdge.target !== node.id && 
+		findNode(outgoingEdge.target)
+	
+	console.log('🔍 Analyse des connexions cible:', {
+		hasIncoming: !!incomingEdge,
+		hasOutgoing: !!outgoingEdge,
+		outgoingTarget: outgoingEdge?.target,
+		isTargetConnectedToExistingNode,
+		nodeId: node.id
+	})
 	
 	// 1. Supprimer toutes les connexions existantes
 	const edgesToRemove = [
@@ -2586,15 +2663,47 @@ async function handleMoveBetweenBranches(node, targetAddElement, savedPositions)
 		})
 	}
 	
-	// Connecter le node aux éléments suivants de la branche cible
-	if (outgoingEdge) {
-		const targetNode = findNode(outgoingEdge.target)
+	// CORRECTION PRINCIPALE: Gérer les connexions sortantes intelligemment
+	if (isTargetConnectedToExistingNode) {
+		// CAS 1: L'add-element cible était connecté à un node existant
+		// → Insérer le node déplacé DANS LA CHAÎNE (préserver la connexion existante)
+		console.log('✅ INSERTION dans la chaîne - Connexion préservée vers:', outgoingEdge.target)
+		
+		const existingTargetNode = findNode(outgoingEdge.target)
 		newEdges.push({
 			id: `e-${node.id}-${outgoingEdge.target}`,
 			source: node.id,
 			target: outgoingEdge.target,
 			type: outgoingEdge.type || 'add-node',
-			animated: targetNode && targetNode.type === 'end' ? false : false
+			animated: existingTargetNode && existingTargetNode.type === 'end' ? false : outgoingEdge.animated || false
+		})
+		
+	} else {
+		// CAS 2: L'add-element cible n'était pas connecté à un node existant
+		// → Créer un nouveau node "end" pour cette branche
+		console.log('🔚 Création d\'un nouveau node end pour la branche cible')
+		const endId = `${node.id}-end`
+		const endNode = {
+			id: endId,
+			type: 'end',
+			position: {
+				x: node.position.x + 22, // Centré par rapport au node
+				y: node.position.y + 150
+			},
+			data: {
+				label: 'Fin du questionnaire',
+				message: 'Merci d\'avoir complété ce questionnaire !'
+			}
+		}
+		addNodes(endNode)
+		
+		// Connecter le node déplacé à son nouveau node "end"
+		newEdges.push({
+			id: `e-${node.id}-${endId}`,
+			source: node.id,
+			target: endId,
+			type: 'add-node',
+			animated: false
 		})
 	}
 	
@@ -2630,49 +2739,100 @@ async function handleMoveBetweenBranches(node, targetAddElement, savedPositions)
 		newEdges.push(restoredIncomingEdge)
 	}
 	
-	// IMPORTANT: Vérifier s'il y avait des nodes connectés APRÈS le node déplacé
-	// Si oui, connecter l'add-element à ces nodes au lieu de créer un "end"
-	let nextNodeAfterMoved = null
-	if (nodeOutgoingEdges.length > 0) {
-		// Le node déplacé avait des connexions sortantes
-		nextNodeAfterMoved = nodeOutgoingEdges[0].target
-		console.log('🔗 Node suivant trouvé après le node déplacé:', nextNodeAfterMoved)
-		
-		// Connecter l'add-element restauré à ce node
+	if (nodeOutgoingEdges.length > 0 || addElementInfo.savedOutgoingEdge) {
+	// PRIORITÉ 1: Utiliser savedOutgoingEdge si disponible
+	if (addElementInfo.savedOutgoingEdge && findNode(addElementInfo.savedOutgoingEdge.target)) {
+		console.log('✅ Utilisation de savedOutgoingEdge pour reconnecter l\'AddElement restauré')
 		newEdges.push({
-			id: `e-${originalAddElementId}-${nextNodeAfterMoved}`,
+			id: `e-${originalAddElementId}-${addElementInfo.savedOutgoingEdge.target}`,
 			source: originalAddElementId,
-			target: nextNodeAfterMoved,
-			type: 'add-node',
-			animated: false
-		})
-	} else {
-		// Pas de node suivant, créer un node end
-		const endId = `${originalAddElementId}-end`
-		const endNode = {
-			id: endId,
-			type: 'end',
-			position: {
-				x: restoredAddElement.position.x + 22, // Centré
-				y: restoredAddElement.position.y + 150
-			},
-			data: {
-				label: 'Fin du questionnaire',
-				message: 'Merci d\'avoir complété ce questionnaire !'
-			}
-		}
-		addNodes(endNode)
-		
-		newEdges.push({
-			id: `e-${originalAddElementId}-${endId}`,
-			source: originalAddElementId,
-			target: endId,
-			type: 'add-node',
-			animated: false
+			target: addElementInfo.savedOutgoingEdge.target,
+			type: addElementInfo.savedOutgoingEdge.type || 'add-node',
+			animated: addElementInfo.savedOutgoingEdge.animated || false
 		})
 	}
+	// PRIORITÉ 2: Utiliser nodeOutgoingEdges comme fallback
+	else if (nodeOutgoingEdges.length > 0) {
+		console.log('🌉 Création d\'un pont pour maintenir l\'ancienne chaîne')
+		
+		// Connecter l'add-element restauré au premier node suivant
+		const nextNodeAfterMoved = nodeOutgoingEdges[0].target
+		const nextNode = findNode(nextNodeAfterMoved)
+		
+		// Vérifier si c'est un node "end" générique qu'on peut réutiliser
+		if (nextNode && nextNode.type === 'end' && 
+		    nextNode.id.includes('end') && 
+		    !nextNode.id.startsWith(node.id)) {
+			// C'est un node "end" générique, on peut le connecter à l'add-element restauré
+			newEdges.push({
+				id: `e-${originalAddElementId}-${nextNodeAfterMoved}`,
+				source: originalAddElementId,
+				target: nextNodeAfterMoved,
+				type: 'add-node',
+				animated: false
+			})
+		} else if (nextNode && nextNode.type !== 'end') {
+			// C'est un node normal, créer le pont
+			newEdges.push({
+				id: `e-${originalAddElementId}-${nextNodeAfterMoved}`,
+				source: originalAddElementId,
+				target: nextNodeAfterMoved,
+				type: 'add-node',
+				animated: false
+			})
+		} else {
+			// Créer un nouveau node "end" pour l'add-element restauré
+			const restoredEndId = `${originalAddElementId}-end`
+			const restoredEndNode = {
+				id: restoredEndId,
+				type: 'end',
+				position: {
+					x: restoredAddElement.position.x + 22,
+					y: restoredAddElement.position.y + 150
+				},
+				data: {
+					label: 'Fin du questionnaire',
+					message: 'Merci d\'avoir complété ce questionnaire !'
+				}
+			}
+			addNodes(restoredEndNode)
+			
+			newEdges.push({
+				id: `e-${originalAddElementId}-${restoredEndId}`,
+				source: originalAddElementId,
+				target: restoredEndId,
+				type: 'add-node',
+				animated: false
+			})
+		}
+	}
+} else {
+	// Pas de connexion sortante sauvegardée, créer un node end pour l'add-element restauré
+	const restoredEndId = `${originalAddElementId}-end`
+	const restoredEndNode = {
+		id: restoredEndId,
+		type: 'end',
+		position: {
+			x: restoredAddElement.position.x + 22,
+			y: restoredAddElement.position.y + 150
+		},
+		data: {
+			label: 'Fin du questionnaire',
+			message: 'Merci d\'avoir complété ce questionnaire !'
+		}
+	}
+	addNodes(restoredEndNode)
 	
-	// 7. Ajouter toutes les nouvelles connexions
+	newEdges.push({
+		id: `e-${originalAddElementId}-${restoredEndId}`,
+		source: originalAddElementId,
+		target: restoredEndId,
+		type: 'add-node',
+		animated: false
+	})
+}
+	
+	// 8. Ajouter toutes les nouvelles connexions
 	addEdges(newEdges)
 	
 	// Attendre que les edges soient ajoutés et forcer la mise à jour
@@ -2682,12 +2842,12 @@ async function handleMoveBetweenBranches(node, targetAddElement, savedPositions)
 	triggerRef(edges)
 	triggerRef(nodes)
 	
-	// 8. RESTAURER les positions sauvegardées pour éviter le désalignement
+	// 9. RESTAURER les positions sauvegardées pour éviter le désalignement
 	await nextTick()
 	
 	// Restaurer les positions de toutes les autres branches
 	savedPositions.forEach((pos, nodeId) => {
-		// Ne pas restaurer la position du node qu'on vient de déplacer
+		// Ne pas restaurer la position des nodes qu'on vient de créer/modifier
 		if (nodeId !== node.id && nodeId !== originalAddElementId) {
 			const nodeToRestore = findNode(nodeId)
 			if (nodeToRestore) {
@@ -2696,21 +2856,14 @@ async function handleMoveBetweenBranches(node, targetAddElement, savedPositions)
 		}
 	})
 	
-	// 9. Mettre à jour les internals
+	// 10. Mettre à jour les internals
 	const nodesToUpdate = [node.id, originalAddElementId]
-	if (!nextNodeAfterMoved) {
-		// On a créé un node end, l'ajouter à la liste
-		nodesToUpdate.push(`${originalAddElementId}-end`)
-	} else {
-		// On s'est connecté à un node existant, l'ajouter à la liste
-		nodesToUpdate.push(nextNodeAfterMoved)
-	}
 	if (incomingEdge) nodesToUpdate.push(incomingEdge.source)
 	if (outgoingEdge) nodesToUpdate.push(outgoingEdge.target)
 	
 	updateNodeInternals([...new Set(nodesToUpdate)])
 	
-	// 10. Mettre à jour les informations du node pour refléter sa nouvelle branche
+	// 11. Mettre à jour les informations du node pour refléter sa nouvelle branche
 	const nodeData = { ...node.data }
 	// IMPORTANT: Toujours supprimer l'ancienne référence createdFromAddElement
 	// car le node a maintenant changé de branche
@@ -2731,7 +2884,7 @@ async function handleMoveBetweenBranches(node, targetAddElement, savedPositions)
 				type: 'simple-condition',
 				label: targetAddElement.data.branchLabel || incomingEdge.label
 			},
-			savedOutgoingEdge: outgoingEdge ? {
+			savedOutgoingEdge: isTargetConnectedToExistingNode ? {
 				target: outgoingEdge.target,
 				type: outgoingEdge.type
 			} : null
@@ -2739,19 +2892,8 @@ async function handleMoveBetweenBranches(node, targetAddElement, savedPositions)
 	}
 	updateNode(node.id, { data: nodeData })
 	
-	// 11. Forcer la mise à jour après un délai
+	// 12. Forcer la mise à jour après un délai
 	setTimeout(async () => {
-		// Vérifier que le node est bien connecté à la nouvelle branche
-		const currentEdges = edges.value.filter(e => e.target === node.id)
-		console.log('🔍 Vérification finale des connexions du node:', {
-			nodeId: node.id,
-			edges: currentEdges.map(e => ({
-				source: e.source,
-				sourceHandle: e.sourceHandle,
-				label: e.label
-			}))
-		})
-		
 		// Ne PAS déclencher de layout automatique pour préserver les positions
 		// Juste s'assurer que les connexions sont correctes
 		await forceUpdateAllConnections()
@@ -2763,7 +2905,7 @@ async function handleMoveBetweenBranches(node, targetAddElement, savedPositions)
 	console.log('✅ Mouvement entre branches terminé')
 }
 
-// NOUVELLE FONCTION : Traitement normal pour les autres cas
+// NOUVELLE FONCTION : Traitement normal pour les autres cas (CORRIGÉE)
 async function handleNormalDropOnAddElement(node, targetAddElement) {
 	console.log('🔧 Traitement normal du drop sur add-element')
 	
@@ -2811,6 +2953,19 @@ async function handleNormalDropOnAddElement(node, targetAddElement) {
 	const nodeIncomingEdges = edges.value.filter(e => e.target === node.id)
 	const nodeOutgoingEdges = edges.value.filter(e => e.source === node.id)
 	
+	// NOUVEAU: Détecter si l'add-element est connecté à un node existant qui n'est pas le node déplacé
+	const isConnectedToExistingNode = outgoingEdge && 
+		outgoingEdge.target !== node.id && 
+		findNode(outgoingEdge.target)
+	
+	console.log('🔍 Analyse des connexions:', {
+		hasIncoming: !!incomingEdge,
+		hasOutgoing: !!outgoingEdge,
+		outgoingTarget: outgoingEdge?.target,
+		isConnectedToExistingNode,
+		nodeId: node.id
+	})
+	
 	// Supprimer toutes les connexions existantes
 	const edgesToRemove = [
 		...(incomingEdge ? [incomingEdge.id] : []),
@@ -2839,9 +2994,43 @@ async function handleNormalDropOnAddElement(node, targetAddElement) {
 		})
 	}
 	
-	// Connecter le node déplacé à ses anciens enfants OU à la target du add-element
-	if (nodeOutgoingEdges.length > 0) {
-		// Le node déplacé avait des enfants, les reconnecter
+	// CORRECTION PRINCIPALE: Gérer les connexions sortantes intelligemment
+	if (isConnectedToExistingNode) {
+		// CAS 1: L'add-element était connecté à un node existant différent du node déplacé
+		// → Insérer le node déplacé DANS LA CHAÎNE (préserver la connexion existante)
+		console.log('✅ INSERTION dans la chaîne - Connexion préservée vers:', outgoingEdge.target)
+		
+		const existingTargetNode = findNode(outgoingEdge.target)
+		newEdges.push({
+			id: `e-${node.id}-${outgoingEdge.target}`,
+			source: node.id,
+			target: outgoingEdge.target,
+			type: outgoingEdge.type || 'add-node',
+			animated: existingTargetNode && existingTargetNode.type === 'end' ? false : outgoingEdge.animated || false
+		})
+		
+		// Créer un pont pour les anciens nodes connectés au node déplacé si nécessaire
+		if (nodeIncomingEdges.length === 1 && nodeOutgoingEdges.length > 0) {
+			const inEdge = nodeIncomingEdges[0]
+			const parentNode = findNode(inEdge.source)
+			
+			if (parentNode && parentNode.type !== 'condition') {
+				// Ne connecter que le parent au premier enfant pour maintenir la chaîne
+				const firstOutEdge = nodeOutgoingEdges[0]
+				const childNode = findNode(firstOutEdge.target)
+				newEdges.push({
+					id: `e-${inEdge.source}-${firstOutEdge.target}`,
+					source: inEdge.source,
+					target: firstOutEdge.target,
+					type: firstOutEdge.type || 'add-node',
+					animated: childNode && childNode.type === 'end' ? false : firstOutEdge.animated || false
+				})
+			}
+		}
+		
+	} else if (nodeOutgoingEdges.length > 0) {
+		// CAS 2: L'add-element n'était pas connecté, utiliser les anciennes connexions du node
+		console.log('📎 Utilisation des anciennes connexions du node déplacé')
 		nodeOutgoingEdges.forEach(outEdge => {
 			const targetNode = findNode(outEdge.target)
 			newEdges.push({
@@ -2852,35 +3041,53 @@ async function handleNormalDropOnAddElement(node, targetAddElement) {
 				animated: targetNode && targetNode.type === 'end' ? false : outEdge.animated || false
 			})
 		})
-	} else if (outgoingEdge) {
-		// Le node déplacé n'avait pas d'enfants, connecter à la target du add-element
-		const targetNode = findNode(outgoingEdge.target)
-		newEdges.push({
-			id: `e-${node.id}-${outgoingEdge.target}`,
-			source: node.id,
-			target: outgoingEdge.target,
-			type: outgoingEdge.type || 'add-node',
-			animated: targetNode && targetNode.type === 'end' ? false : outgoingEdge.animated || false
-		})
-	}
-	
-	// Créer un pont pour les anciens nodes connectés si nécessaire
-	if (nodeIncomingEdges.length === 1 && nodeOutgoingEdges.length > 0) {
-		const inEdge = nodeIncomingEdges[0]
-		const parentNode = findNode(inEdge.source)
 		
-		if (parentNode && parentNode.type !== 'condition') {
-			// Ne connecter que le parent au premier enfant pour maintenir la chaîne
-			const firstOutEdge = nodeOutgoingEdges[0]
-			const childNode = findNode(firstOutEdge.target)
-			newEdges.push({
-				id: `e-${inEdge.source}-${firstOutEdge.target}`,
-				source: inEdge.source,
-				target: firstOutEdge.target,
-				type: firstOutEdge.type || 'add-node',
-				animated: childNode && childNode.type === 'end' ? false : firstOutEdge.animated || false
-			})
+		// Créer un pont pour les anciens nodes connectés si nécessaire
+		if (nodeIncomingEdges.length === 1) {
+			const inEdge = nodeIncomingEdges[0]
+			const parentNode = findNode(inEdge.source)
+			
+			if (parentNode && parentNode.type !== 'condition') {
+				// Ne connecter que le parent au premier enfant pour maintenir la chaîne
+				const firstOutEdge = nodeOutgoingEdges[0]
+				const childNode = findNode(firstOutEdge.target)
+				newEdges.push({
+					id: `e-${inEdge.source}-${firstOutEdge.target}`,
+					source: inEdge.source,
+					target: firstOutEdge.target,
+					type: firstOutEdge.type || 'add-node',
+					animated: childNode && childNode.type === 'end' ? false : firstOutEdge.animated || false
+				})
+			}
 		}
+		
+	} else {
+		// CAS 3: Ni l'add-element ni le node déplacé n'avaient de connexions sortantes
+		// → Créer un nouveau node "end"
+		console.log('🔚 Création d\'un nouveau node end')
+		const endId = `${node.id}-end`
+		const endNode = {
+			id: endId,
+			type: 'end',
+			position: {
+				x: node.position.x + 22, // Centré par rapport au node
+				y: node.position.y + 150
+			},
+			data: {
+				label: 'Fin du questionnaire',
+				message: 'Merci d\'avoir complété ce questionnaire !'
+			}
+		}
+		addNodes(endNode)
+		
+		// Connecter le node déplacé à son nouveau node "end"
+		newEdges.push({
+			id: `e-${node.id}-${endId}`,
+			source: node.id,
+			target: endId,
+			type: 'add-node',
+			animated: false
+		})
 	}
 	
 	// Ajouter toutes les nouvelles connexions
@@ -4735,6 +4942,8 @@ const hoveredAddElementId = ref<string | null>(null)
 
 // Fournir hoveredAddElementId aux composants enfants
 provide('hoveredAddElementId', hoveredAddElementId)
+// Fournir isReplacingNode aux composants enfants pour suspendre la suppression des nodes orphelins
+provide('isReplacingNode', isReplacingNode)
 
 // Computed pour la position de l'indicateur de drop
 const edgeDropIndicatorStyle = computed(() => {

@@ -14,7 +14,7 @@
           <Icon icon="mdi:microphone" :width="24" />
           <span>Audio</span>
         </button>
-        <button class="element-option" @click="addNode('end')" title="Terminer">
+        <button v-if="!isConditionBranch" class="element-option" @click="addNode('end')" title="Terminer">
           <Icon icon="mdi:flag-checkered" :width="24" />
           <span>Fin</span>
         </button>
@@ -101,11 +101,18 @@ const { addNodes, removeNodes, addEdges, removeEdges, findNode, updateNodeIntern
 
 // Injecter l'état de survol depuis le parent (optionnel)
 const hoveredAddElementId = inject('hoveredAddElementId', null)
+// Injecter le flag de remplacement pour suspendre la suppression des nodes orphelins
+const isReplacingNode = inject('isReplacingNode', null)
 
 // Computed pour savoir si ce node est survolé
 const isHovered = computed(() => {
   if (!hoveredAddElementId || !hoveredAddElementId.value) return false
   return hoveredAddElementId.value === props.id
+})
+
+// Computed pour savoir si ce node fait partie d'une branche de condition
+const isConditionBranch = computed(() => {
+  return !!props.data?.conditionBranch
 })
 
 // Debug: voir ce qui est disponible
@@ -114,6 +121,12 @@ console.log('🔍 VueFlow instance methods:', Object.keys(vueFlowInstance))
 const addNode = async (type: string) => {
   console.log('🔄 AddElementNode: Début du remplacement', { currentId: props.id, newType: type })
   console.log('🔍 Props reçues par AddElementNode:', props)
+  
+  // Activer le flag pour suspendre la suppression des nodes orphelins
+  if (isReplacingNode && isReplacingNode.value !== undefined) {
+    isReplacingNode.value = true
+    console.log('🛡️ Suspension de la suppression des nodes orphelins activée')
+  }
   
   const currentNode = findNode(props.id)
   if (!currentNode) {
@@ -133,9 +146,9 @@ const addNode = async (type: string) => {
   
   // SAUVEGARDER les edges entrant ET sortant AVANT toute autre opération
   const savedIncomingEdge = incomingEdges.length > 0 ? { ...incomingEdges[0] } : null
-  const savedOutgoingEdge = outgoingEdges.length > 0 ? { ...outgoingEdges[0] } : null
+  const savedOutgoingEdges = outgoingEdges.map(edge => ({ ...edge })) // Sauvegarder TOUS les edges sortants
   console.log('💾 SAUVEGARDE EARLY - Edge entrant dans AddElementNode:', savedIncomingEdge)
-  console.log('💾 SAUVEGARDE EARLY - Edge sortant dans AddElementNode:', savedOutgoingEdge)
+  console.log('💾 SAUVEGARDE EARLY - Edges sortants dans AddElementNode:', savedOutgoingEdges)
 
   // Préparer les informations à stocker AVEC la position originale
   const addElementInfo = {
@@ -169,7 +182,7 @@ const addNode = async (type: string) => {
       createdFromAddElement: {
         ...addElementInfo,
         savedIncomingEdge: savedIncomingEdge, // Ajouter l'edge entrant sauvé
-        savedOutgoingEdge: savedOutgoingEdge  // Ajouter l'edge sortant sauvé
+        savedOutgoingEdges: savedOutgoingEdges  // Ajouter TOUS les edges sortants sauvés
       }
     },
     // IMPORTANT: Les nodes condition doivent être non-draggable
@@ -244,45 +257,103 @@ const addNode = async (type: string) => {
 
   // Gérer les edges sortants
   if (type !== 'end') {
-    if (outgoingEdges.length > 0) {
-      // Reconnecter les edges sortants existants
-      outgoingEdges.forEach(edge => {
+    // Si c'est un node dans une branche de condition
+    if (isConditionBranch.value) {
+      // IMPORTANT: Utiliser les edges sauvegardés car ils ont été supprimés
+      const edgesToReconnect = savedOutgoingEdges.length > 0 ? savedOutgoingEdges : outgoingEdges
+      
+      console.log('🔍 Analyse des edges sortants:', {
+        countOriginal: outgoingEdges.length,
+        countSaved: savedOutgoingEdges.length,
+        edgesOriginal: outgoingEdges.map(e => ({ id: e.id, source: e.source, target: e.target })),
+        edgesSaved: savedOutgoingEdges.map(e => ({ id: e.id, source: e.source, target: e.target }))
+      })
+      
+      if (edgesToReconnect.length > 0) {
+        console.log('🔗 Reconnexion aux edges sortants (depuis sauvegarde)')
+        edgesToReconnect.forEach(edge => {
+          console.log('  → Reconnexion:', newNodeId, '→', edge.target)
+          addEdges({
+            id: `e-${newNodeId}-${edge.target}`,
+            source: newNodeId,
+            target: edge.target,
+            type: 'add-node',
+            animated: false
+          })
+        })
+      } else {
+        // Si pas d'edge sortant, chercher le node "Fin" de cette branche
+        const branchId = props.data.conditionBranch || props.data.branchId
+        const expectedEndNodeId = `${branchId}-ghost-end`
+        
+        console.log('🔍 Pas d\'edge sortant, recherche du node Fin pour la branche:', {
+          branchId,
+          expectedEndNodeId,
+          conditionBranch: props.data.conditionBranch,
+          branchIdData: props.data.branchId
+        })
+        
+        const nodes = vueFlowInstance.nodes?.value || vueFlowInstance.getNodes?.() || []
+        console.log('📊 Tous les nodes disponibles:', nodes.map(n => ({ id: n.id, type: n.type })))
+        
+        const endNode = nodes.find(n => n.id === expectedEndNodeId && n.type === 'end')
+        
+        if (endNode) {
+          console.log('✅ Node Fin trouvé:', endNode.id)
+          addEdges({
+            id: `e-${newNodeId}-${endNode.id}`,
+            source: newNodeId,
+            target: endNode.id,
+            type: 'add-node',
+            animated: false
+          })
+        } else {
+          console.log('❌ Aucun node Fin trouvé et aucun edge sortant pour la branche:', branchId)
+          console.log('🔍 Nodes de type "end" disponibles:', nodes.filter(n => n.type === 'end').map(n => n.id))
+        }
+      }
+    } else if (!isConditionBranch.value) {
+      // Comportement normal pour les nodes non-condition
+      if (outgoingEdges.length > 0) {
+        // Reconnecter les edges sortants existants
+        outgoingEdges.forEach(edge => {
+          addEdges({
+            ...edge,
+            id: edge.id,
+            source: newNodeId,
+            type: 'add-node',
+            animated: false
+          })
+        })
+      } else {
+        // Créer un nouveau node 'end' comme cible par défaut
+        const endId = `${newNodeId}-end`
+        addNodes({
+          id: endId,
+          type: 'end',
+          position: {
+            x: currentNode.position.x,
+            y: currentNode.position.y + 150
+          },
+          data: {
+            label: 'Fin du questionnaire',
+            message: 'Merci d\'avoir complété ce questionnaire !'
+          }
+        })
+        
+        // Attendre et mettre à jour les internals du node end aussi
+        await nextTick()
+        updateNodeInternals([endId])
+        
+        // Créer l'edge add-node vers le node end
         addEdges({
-          ...edge,
-          id: edge.id,
+          id: `e-${newNodeId}-${endId}`,
           source: newNodeId,
+          target: endId,
           type: 'add-node',
           animated: false
         })
-      })
-    } else {
-      // Créer un nouveau node 'end' comme cible par défaut
-      const endId = `${newNodeId}-end`
-      addNodes({
-        id: endId,
-        type: 'end',
-        position: {
-          x: currentNode.position.x,
-          y: currentNode.position.y + 150
-        },
-        data: {
-          label: 'Fin du questionnaire',
-          message: 'Merci d\'avoir complété ce questionnaire !'
-        }
-      })
-      
-      // Attendre et mettre à jour les internals du node end aussi
-      await nextTick()
-      updateNodeInternals([endId])
-      
-      // Créer l'edge add-node vers le node end
-      addEdges({
-        id: `e-${newNodeId}-${endId}`,
-        source: newNodeId,
-        target: endId,
-        type: 'add-node',
-        animated: false
-      })
+      }
     }
   } else {
     // Pour un node 'end', reconnecter les edges sortants s'il y en a
@@ -308,7 +379,8 @@ const addNode = async (type: string) => {
       oldNodeId: props.id,
       newNodeId: newNodeId,
       newNodeType: type,
-      edgeInfo: incomingEdges[0] // Pour identifier la branche de condition
+      edgeInfo: incomingEdges[0], // Pour identifier la branche de condition
+      isConditionBranch: isConditionBranch.value // Indiquer si c'est une branche de condition
     })
   }, 100)
   
