@@ -1700,7 +1700,8 @@ const handleConditionConfirm = async (data: any) => {
 						isGhost: true,
 						parentConditionId: nodeId,
 						branchId: branch.id,
-						branchLabel: branch.label
+						branchLabel: branch.label,
+						conditionBranch: branch.id
 					},
 					draggable: false
 				})
@@ -1720,6 +1721,32 @@ const handleConditionConfirm = async (data: any) => {
 						expectedValues: branch.values || [branch.value]
 					}
 				})
+				
+				// IMPORTANT: Créer un node "Fin" pour chaque nouvelle branche
+				const endId = `${ghostId}-end`
+				newNodes.push({
+					id: endId,
+					type: 'end',
+					position: {
+						x: conditionNode.position.x + xOffset,
+						y: conditionNode.position.y + yOffset + 150
+					},
+					data: {
+						label: 'Fin du questionnaire',
+						message: 'Merci d\'avoir complété ce questionnaire !'
+					}
+				})
+				
+				// Créer l'edge du node "Ajouter un élément" vers le node "Fin"
+				newEdges.push({
+					id: `e-${ghostId}-${endId}`,
+					source: ghostId,
+					target: endId,
+					type: 'add-node',
+					animated: false
+				})
+				
+				console.log('✅ NOUVEAU CHEMIN - Node Fin ajouté:', endId)
 			})
 			
 			// Ajouter les nouveaux nodes et edges
