@@ -280,7 +280,8 @@ const addNode = async (type: string) => {
         id: `e-${newNodeId}-${endId}`,
         source: newNodeId,
         target: endId,
-        type: 'add-node'
+        type: 'add-node',
+        animated: false
       })
     }
   } else {

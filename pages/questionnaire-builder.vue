@@ -1215,14 +1215,22 @@ const handleStartupSelection = async (action: any) => {
 const edges = shallowRef<Edge[]>([])  // Initialiser vide pour lazy loading
 const isDragging = ref(false)
 
-// Watcher pour supprimer les nodes "end" orphelins
-watch([edges, nodes], ([newEdges, newNodes]) => {
-	// Trouver tous les nodes "end"
-	const endNodes = newNodes.filter(node => node.type === 'end')
+// Créer une fonction debouncée pour gérer les nodes orphelins
+const handleOrphanedNodes = debounce(() => {
+	if (isDragging.value) {
+		console.log('⏸️ Gestion des nodes orphelins suspendue pendant le drag')
+		return
+	}
+	
+	const currentEdges = edges.value
+	const currentNodes = nodes.value
+	
+	// 1. D'abord supprimer les nodes "end" orphelins
+	const endNodes = currentNodes.filter(node => node.type === 'end')
 	
 	endNodes.forEach(endNode => {
 		// Vérifier si le node end a des edges entrants
-		const hasIncomingEdge = newEdges.some(edge => edge.target === endNode.id)
+		const hasIncomingEdge = currentEdges.some(edge => edge.target === endNode.id)
 		
 		if (!hasIncomingEdge) {
 			console.log(`🗑️ Suppression du node "end" orphelin: ${endNode.id}`)
@@ -1230,6 +1238,63 @@ watch([edges, nodes], ([newEdges, newNodes]) => {
 			removeNodes([endNode.id])
 		}
 	})
+	
+	// 2. Ensuite, connecter tous les nodes sans edge sortant à un node "Fin"
+	// Exclure les nodes de type 'trigger', 'add-element', 'condition' et 'end'
+	const connectableNodes = currentNodes.filter(node => 
+		node.type !== 'trigger' && 
+		node.type !== 'add-element' && 
+		node.type !== 'condition' && 
+		node.type !== 'end'
+	)
+	
+	connectableNodes.forEach(node => {
+		// Vérifier si le node a un edge sortant
+		const hasOutgoingEdge = currentEdges.some(edge => edge.source === node.id)
+		
+		if (!hasOutgoingEdge) {
+			console.log(`🔗 Connexion du node orphelin "${node.id}" à un node Fin`)
+			
+			// Créer un node "end"
+			const endNodeId = `${node.id}-end`
+			const nodeWidth = node.dimensions?.width || 240
+			const endNodeWidth = 200
+			const centerX = node.position.x + (nodeWidth / 2) - (endNodeWidth / 2)
+			
+			// Vérifier si ce node end existe déjà
+			const endNodeExists = currentNodes.some(n => n.id === endNodeId)
+			if (!endNodeExists) {
+				addNodes({
+					id: endNodeId,
+					type: 'end',
+					position: {
+						x: centerX,
+						y: node.position.y + 150
+					},
+					data: {
+						label: 'Fin du questionnaire',
+						message: 'Merci d\'avoir complété ce questionnaire !'
+					}
+				})
+				
+				// Créer l'edge avec bouton "+"
+				setTimeout(() => {
+					addEdges({
+						id: `e-${node.id}-${endNodeId}`,
+						source: node.id,
+						target: endNodeId,
+						type: 'add-node',
+						animated: false
+					})
+				}, 100)
+			}
+		}
+	})
+}, 500) // Attendre 500ms après le dernier changement
+
+// Watcher pour gérer les nodes orphelins
+watch([edges, nodes], () => {
+	handleOrphanedNodes()
 }, { deep: true })
 
 // Créer une version debouncée de layoutGraph pour éviter les appels multiples
@@ -1336,6 +1401,35 @@ const handleNodeDelete = async (nodeId: string) => {
 						await forceUpdateAllConnections()
 					}, 100)
 				}
+			} else {
+				// S'il n'y a pas d'edge sortant, créer un node "end" connecté à l'add-element
+				const endNodeId = `${addElementId}-end`
+				const endNodeWidth = 200
+				const addElementWidth = 240
+				const centerX = node.position.x + (addElementWidth / 2) - (endNodeWidth / 2)
+				
+				addNodes({
+					id: endNodeId,
+					type: 'end',
+					position: {
+						x: centerX,
+						y: node.position.y + 150
+					},
+					data: {
+						label: 'Fin du questionnaire',
+						message: 'Merci d\'avoir complété ce questionnaire !'
+					}
+				})
+				
+				// Créer l'edge entre l'add-element et le node end
+				await nextTick()
+				addEdges({
+					id: `e-${addElementId}-${endNodeId}`,
+					source: addElementId,
+					target: endNodeId,
+					type: 'add-node',
+					animated: false
+				})
 			}
 		} else if (incomingEdge && outgoingEdge) {
 			// Comportement normal : reconnecter
