@@ -4052,14 +4052,18 @@ onNodeDragStop(async (params) => {
 		return
 	}
 
-	// Supprimer d'abord le ghost node
+	// CORRECTION : Toujours supprimer le ghost node en premier, peu importe le cas
 	if (ghostNode) {
+		console.log('🗑️ Suppression du ghost node:', ghostId)
 		const connectedEdges = getConnectedEdges([ghostNode], edges.value) as GraphEdge[]
 		for (const edge of connectedEdges) {
 			edge.source = edge.source === ghostId ? node.id : edge.source
 			edge.target = edge.target === ghostId ? node.id : edge.target
 		}
 		removeNodes([ghostNode])
+		
+		// Attendre que la suppression soit effective
+		await nextTick()
 	}
 
 	// Vérifier si on a déposé le node sur un bouton + ou un add-element
@@ -4096,16 +4100,28 @@ onNodeDragStop(async (params) => {
 			
 			return
 		}
-	} else if (hoveredAddElementId.value) {
-		// Drop sur un node add-element
-		const targetAddElement = nodes.value.find(n => n.id === hoveredAddElementId.value)
-		if (targetAddElement && node.type !== 'condition') {
-			console.log('🎯 Drop du node sur add-element:', targetAddElement.id)
-			
-			// NOUVEAU: Détecter si c'est un mouvement entre branches de la même condition
-			const isMovingBetweenBranches = node.data?.createdFromAddElement && 
-											targetAddElement.data?.conditionBranch && 
-											node.data.createdFromAddElement.conditionBranch
+	}  else if (hoveredAddElementId.value) {
+	// Drop sur un node add-element
+	const targetAddElement = nodes.value.find(n => n.id === hoveredAddElementId.value)
+	if (targetAddElement && node.type !== 'condition') {
+		console.log('🎯 Drop du node sur add-element:', targetAddElement.id)
+		
+		// CORRECTION : S'assurer que le ghost node est supprimé immédiatement
+		if (ghostNode) {
+			console.log('🗑️ Suppression immédiate du ghost node avant drop sur add-element:', ghostId)
+			const connectedEdges = getConnectedEdges([ghostNode], edges.value) as GraphEdge[]
+			for (const edge of connectedEdges) {
+				edge.source = edge.source === ghostId ? node.id : edge.source
+				edge.target = edge.target === ghostId ? node.id : edge.target
+			}
+			removeNodes([ghostNode])
+			await nextTick()
+		}
+		
+		// NOUVEAU: Détecter si c'est un mouvement entre branches de la même condition
+		const isMovingBetweenBranches = node.data?.createdFromAddElement && 
+										targetAddElement.data?.conditionBranch && 
+										node.data.createdFromAddElement.conditionBranch
 			
 			if (isMovingBetweenBranches) {
 				console.log('🔄 Mouvement entre branches détecté - traitement spécial')
@@ -4440,13 +4456,30 @@ const handleMoveNodeToButton = async (node: Node, edge: Edge) => {
 	edgesToAdd.push(newEdge1)
 	
 	// 2. Connecter le node déplacé à la target de l'edge
-	// IMPORTANT: Si la target est un node "end", on ne doit pas animer l'edge
+	// CORRECTION: Si le target est un add-element, vérifier s'il a une connexion sortante
+	let finalTarget = edge.target
+	let finalTargetType = edge.type || 'add-node'
+	let finalAnimated = targetNode.type === 'end' ? false : edge.animated || false
+
+	// Si le target est un add-element, chercher sa connexion sortante
+	if (targetNode.type === 'add-element') {
+		const addElementOutgoingEdge = edges.value.find(e => e.source === edge.target)
+		if (addElementOutgoingEdge) {
+			// Utiliser la connexion de l'add-element comme target final
+			finalTarget = addElementOutgoingEdge.target
+			finalTargetType = addElementOutgoingEdge.type || 'add-node'
+			const finalTargetNode = findNode(finalTarget)
+			finalAnimated = finalTargetNode && finalTargetNode.type === 'end' ? false : addElementOutgoingEdge.animated || false
+			console.log('🔗 Target add-element a une connexion sortante, redirection vers:', finalTarget)
+		}
+	}
+
 	const newEdge2 = {
-		id: `e-${node.id}-${edge.target}`,
+		id: `e-${node.id}-${finalTarget}`,
 		source: node.id,
-		target: edge.target,
-		type: targetNode.type === 'add-element' ? 'add-node' : edge.type || 'add-node',
-		animated: targetNode.type === 'end' ? false : edge.animated || false
+		target: finalTarget,
+		type: finalTargetType,
+		animated: finalAnimated
 	}
 	edgesToAdd.push(newEdge2)
 	
@@ -4485,7 +4518,25 @@ const handleMoveNodeToButton = async (node: Node, edge: Edge) => {
 					let addElementPosition = { x: node.position.x, y: node.position.y }
 					let addElementId = `${parentNode.id}-${branchId}-ghost-${Date.now()}`
 					
+					// Ajouter ces logs pour debug
+					console.log('🔍 DEBUG - Node déplacé:', {
+						nodeId: node.id,
+						nodeType: node.type,
+						hasCreatedFromAddElement: !!node.data?.createdFromAddElement,
+						createdFromAddElementData: node.data?.createdFromAddElement
+					})
+
 					if (node.data?.createdFromAddElement) {
+						console.log('🔍 DEBUG - CreatedFromAddElement details:', {
+							nodeId: node.data.createdFromAddElement.nodeId,
+							conditionBranch: node.data.createdFromAddElement.conditionBranch,
+							branchLabel: node.data.createdFromAddElement.branchLabel,
+							originalPosition: node.data.createdFromAddElement.originalPosition,
+							hasSavedIncomingEdge: !!node.data.createdFromAddElement.savedIncomingEdge,
+							hasSavedOutgoingEdge: !!node.data.createdFromAddElement.savedOutgoingEdge,
+							savedOutgoingEdge: node.data.createdFromAddElement.savedOutgoingEdge
+						})
+						
 						console.log('🔄 Node déplacé avait été créé depuis AddElement, restauration des propriétés')
 						const addElementInfo = node.data.createdFromAddElement
 						// Utiliser la position originale si disponible
@@ -4499,6 +4550,11 @@ const handleMoveNodeToButton = async (node: Node, edge: Edge) => {
 							console.log('🆔 Utilisation de l\'ID original du AddElement:', addElementId)
 						}
 					}
+					
+					console.log('🔍 DEBUG - Création de l\'add-element:', {
+						addElementId: addElementId,
+						addElementPosition: addElementPosition
+					})
 					
 					// Créer un node add-element pour cette branche
 					const addElementNode = {
@@ -4529,50 +4585,98 @@ const handleMoveNodeToButton = async (node: Node, edge: Edge) => {
 					}
 					edgesToAdd.push(condToAddElement)
 					
-					// Si le node déplacé avait des enfants, les connecter au add-element
-					if (nodeOutgoingEdges.length > 0) {
-						const firstChild = nodeOutgoingEdges[0]
-						const addElementToChild = {
-							id: `e-${addElementNode.id}-${firstChild.target}`,
-							source: addElementNode.id,
-							target: firstChild.target,
-							type: 'add-node'
-						}
-						edgesToAdd.push(addElementToChild)
+					// CORRECTION : Vérifier d'abord si le node déplacé avait une connexion sauvegardée
+					let hasRestoredConnection = false
+
+					console.log('🔍 DEBUG - Vérification savedOutgoingEdge:', {
+						hasCreatedFromAddElement: !!node.data?.createdFromAddElement,
+						hasSavedOutgoingEdge: !!node.data?.createdFromAddElement?.savedOutgoingEdge,
+						savedOutgoingEdge: node.data?.createdFromAddElement?.savedOutgoingEdge
+					})
+
+					// Si le node a été créé depuis un add-element et a une connexion sauvegardée
+					if (node.data?.createdFromAddElement?.savedOutgoingEdge) {
+						const savedOutgoingEdge = node.data.createdFromAddElement.savedOutgoingEdge
+						const savedTargetNode = findNode(savedOutgoingEdge.target)
 						
-						// Les autres enfants restent connectés entre eux
-						for (let i = 1; i < nodeOutgoingEdges.length; i++) {
-							const childEdge = {
-								id: `e-${nodeOutgoingEdges[i-1].target}-${nodeOutgoingEdges[i].target}`,
-								source: nodeOutgoingEdges[i-1].target,
-								target: nodeOutgoingEdges[i].target,
+						console.log('🔍 DEBUG - Tentative de restauration:', {
+							savedTargetId: savedOutgoingEdge.target,
+							savedTargetExists: !!savedTargetNode,
+							savedTargetType: savedTargetNode?.type
+						})
+						
+						if (savedTargetNode) {
+							console.log('🔗 Restauration de la connexion sauvegardée vers le node:', savedOutgoingEdge.target)
+							const addElementToSavedTarget = {
+								id: `e-${addElementNode.id}-${savedOutgoingEdge.target}`,
+								source: addElementNode.id,
+								target: savedOutgoingEdge.target,
+								type: 'add-node',
+								animated: savedTargetNode.type === 'end' ? false : false
+							}
+							console.log('🔍 DEBUG - Edge à créer:', addElementToSavedTarget)
+							edgesToAdd.push(addElementToSavedTarget)
+							hasRestoredConnection = true
+						}
+					}
+
+					console.log('🔍 DEBUG - Résultat restauration:', {
+						hasRestoredConnection,
+						edgesToAddCount: edgesToAdd.length
+					})
+
+					// Fallback : utiliser la logique existante seulement si pas de connexion restaurée
+					if (!hasRestoredConnection) {
+						console.log('🔍 DEBUG - Fallback: pas de connexion restaurée, utilisation de la logique par défaut')
+						console.log('🔍 DEBUG - nodeOutgoingEdges.length:', nodeOutgoingEdges.length)
+						
+						if (nodeOutgoingEdges.length > 0) {
+							const firstChild = nodeOutgoingEdges[0]
+							console.log('🔍 DEBUG - Connexion aux enfants existants, premier enfant:', firstChild.target)
+							const addElementToChild = {
+								id: `e-${addElementNode.id}-${firstChild.target}`,
+								source: addElementNode.id,
+								target: firstChild.target,
 								type: 'add-node'
 							}
-							edgesToAdd.push(childEdge)
-						}
-					} else {
-						// Pas d'enfants : créer un node end
-						const endNode = {
-							id: `${addElementNode.id}-end`,
-							type: 'end',
-							position: {
-								x: addElementNode.position.x,
-								y: addElementNode.position.y + 150
-							},
-							data: {
-								label: 'Fin du questionnaire',
-								message: 'Merci d\'avoir complété ce questionnaire !'
+							edgesToAdd.push(addElementToChild)
+							
+							// Les autres enfants restent connectés entre eux
+							for (let i = 1; i < nodeOutgoingEdges.length; i++) {
+								const childEdge = {
+									id: `e-${nodeOutgoingEdges[i-1].target}-${nodeOutgoingEdges[i].target}`,
+									source: nodeOutgoingEdges[i-1].target,
+									target: nodeOutgoingEdges[i].target,
+									type: 'add-node'
+								}
+								edgesToAdd.push(childEdge)
 							}
+						} else {
+							// Pas d'enfants : créer un node end
+							console.log('🔍 DEBUG - Pas d\'enfants, création d\'un nouveau node end')
+							const endNode = {
+								id: `${addElementNode.id}-end`,
+								type: 'end',
+								position: {
+									x: addElementNode.position.x,
+									y: addElementNode.position.y + 150
+								},
+								data: {
+									label: 'Fin du questionnaire',
+									message: 'Merci d\'avoir complété ce questionnaire !'
+								}
+							}
+							addNodes(endNode)
+							
+							const addElementToEnd = {
+								id: `e-${addElementNode.id}-${endNode.id}`,
+								source: addElementNode.id,
+								target: endNode.id,
+								type: 'add-node'
+							}
+							console.log('🔍 DEBUG - Edge vers nouveau node end:', addElementToEnd)
+							edgesToAdd.push(addElementToEnd)
 						}
-						addNodes(endNode)
-						
-						const addElementToEnd = {
-							id: `e-${addElementNode.id}-${endNode.id}`,
-							source: addElementNode.id,
-							target: endNode.id,
-							type: 'add-node'
-						}
-						edgesToAdd.push(addElementToEnd)
 					}
 				}
 			}
