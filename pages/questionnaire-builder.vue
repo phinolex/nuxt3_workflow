@@ -1577,6 +1577,78 @@ const handleAddElementReplaced = async (event: any) => {
 	timeouts.add(timeoutId)
 }
 
+// Fonction pour dupliquer un node
+const handleNodeDuplicate = (nodeId: string) => {
+	const node = findNode(nodeId)
+	if (!node) return
+	
+	// Générer un nouvel ID unique
+	const newId = `${node.type}-${Date.now()}`
+	
+	// Créer une copie profonde des données
+	const newData = JSON.parse(JSON.stringify(node.data))
+	
+	// Modifier le label pour indiquer que c'est une copie
+	if (newData.label) {
+		newData.label = `${newData.label} (copie)`
+	}
+	
+	// Calculer la nouvelle position (sous le node original)
+	const newPosition = {
+		x: node.position.x,
+		y: node.position.y + 150
+	}
+	
+	// Trouver l'edge sortant du node original
+	const outgoingEdge = edges.value.find(e => e.source === nodeId)
+	
+	// Ajouter le nouveau node
+	const newNode = {
+		id: newId,
+		type: node.type,
+		position: newPosition,
+		data: newData
+	}
+	
+	addNodes(newNode)
+	
+	// Créer un edge du node original vers le nouveau node
+	const newEdgeFromOriginal = {
+		id: `e-${nodeId}-${newId}`,
+		source: nodeId,
+		target: newId,
+		type: 'add-node'
+	}
+	
+	// Si le node original avait une connexion sortante, la transférer au nouveau node
+	if (outgoingEdge) {
+		// Supprimer l'ancienne connexion
+		removeEdges([outgoingEdge.id])
+		
+		// Créer une nouvelle connexion du node dupliqué vers l'ancien target
+		const newEdgeToTarget = {
+			id: `e-${newId}-${outgoingEdge.target}`,
+			source: newId,
+			target: outgoingEdge.target,
+			type: outgoingEdge.type || 'add-node',
+			sourceHandle: outgoingEdge.sourceHandle,
+			targetHandle: outgoingEdge.targetHandle
+		}
+		
+		// Ajouter les deux nouvelles connexions
+		addEdges([newEdgeFromOriginal, newEdgeToTarget])
+	} else {
+		// S'il n'y avait pas de connexion sortante, juste connecter au nouveau node
+		addEdges(newEdgeFromOriginal)
+	}
+	
+	message.success(`${node.type === 'question' ? 'Question' : 'Audio'} dupliqué(e) avec succès`)
+	
+	// Réorganiser le layout après duplication
+	setTimeout(() => {
+		layoutGraph()
+	}, 100)
+}
 
 // Gestionnaires pour les modals
 const handleQuestionConfirm = (data: any) => {
@@ -5598,6 +5670,7 @@ const handleDragStart = (nodeType: string, event: DragEvent) => {
 						v-bind="nodeProps" 
 						@edit="handleNodeEdit(nodeProps.id)"
 						@delete="handleNodeDelete(nodeProps.id)"
+						@duplicate="handleNodeDuplicate(nodeProps.id)"
 					/>
 				</template>
 				
@@ -5606,6 +5679,7 @@ const handleDragStart = (nodeType: string, event: DragEvent) => {
 						v-bind="nodeProps"
 						@edit="handleNodeEdit(nodeProps.id)"
 						@delete="handleNodeDelete(nodeProps.id)"
+						@duplicate="handleNodeDuplicate(nodeProps.id)"
 					/>
 				</template>
 				

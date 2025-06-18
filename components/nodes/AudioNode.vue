@@ -25,6 +25,19 @@
       </div>
     </div>
     <div class="node-actions">
+      <n-button 
+        size="tiny" 
+        type="info"
+        quaternary
+        circle
+        @click.stop="onDuplicate"
+        class="nodrag"
+        title="Dupliquer cet audio"
+      >
+        <template #icon>
+          <Icon icon="mdi:content-copy" :width="16" />
+        </template>
+      </n-button>
       <n-popconfirm
         @positive-click="onDelete"
         negative-text="Annuler"
@@ -121,7 +134,7 @@ const props = defineProps({
   }
 })
 
-const emit = defineEmits(['delete', 'edit'])
+const emit = defineEmits(['delete', 'edit', 'duplicate'])
 
 const onDelete = () => {
   emit('delete')
@@ -129,6 +142,10 @@ const onDelete = () => {
 
 const onEdit = () => {
   emit('edit')
+}
+
+const onDuplicate = () => {
+  emit('duplicate')
 }
 
 </script>

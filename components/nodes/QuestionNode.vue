@@ -24,6 +24,18 @@
       </div>
     </div>
     <div class="node-actions">
+      <n-button 
+        size="tiny" 
+        type="info" 
+        circle
+        @click.stop="onDuplicate"
+        class="nodrag"
+        title="Dupliquer cette question"
+      >
+        <template #icon>
+          <Icon icon="mdi:content-copy" :width="16" />
+        </template>
+      </n-button>
       <n-popconfirm
         @positive-click="onDelete"
         negative-text="Annuler"
@@ -119,7 +131,7 @@ const props = defineProps({
   }
 })
 
-const emit = defineEmits(['delete', 'edit'])
+const emit = defineEmits(['delete', 'edit', 'duplicate'])
 
 // Debug: vérifier les props reçues
 console.log('🔍 QuestionNode - Props reçues:', {
@@ -137,6 +149,10 @@ const onDelete = () => {
 
 const onEdit = () => {
   emit('edit')
+}
+
+const onDuplicate = () => {
+  emit('duplicate')
 }
 
 const getQuestionTypeLabel = (type: string) => {
