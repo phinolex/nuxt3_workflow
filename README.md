@@ -38,7 +38,6 @@ A powerful, intuitive visual workflow builder for creating interactive questionn
 - **📱 Responsive Design** - Works on desktop and mobile devices
 - **🔍 Real-time Preview** - Test workflows as you build
 - **🎯 Smart Edge Management** - Automatic reconnection on node deletion
-- **📈 Progress Tracking** - Monitor workflow completion
 
 ## 🖼️ Screenshots
 
