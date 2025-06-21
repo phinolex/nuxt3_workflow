@@ -31,13 +31,13 @@ A powerful, intuitive visual workflow builder for creating interactive questionn
 - **🔊 Audio Nodes** - Integrate guided audio experiences
 - **🔀 Condition Nodes** - Branch workflows based on logic
 - **🏁 End Nodes** - Define workflow completion points
+- **🎯 Smart Edge Management** - Automatic reconnection on node deletion
 
 ### 🎨 Advanced Features
 
 - **📊 Conditional Branching** - Create complex decision trees
 - **📱 Responsive Design** - Works on desktop and mobile devices
 - **🔍 Real-time Preview** - Test workflows as you build
-- **🎯 Smart Edge Management** - Automatic reconnection on node deletion
 
 ## 🖼️ Screenshots
 
